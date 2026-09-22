@@ -1,0 +1,5 @@
+# 사용법: terraform init -backend-config=backend.hcl
+# 계정 전역 리소스라 region/environment 구분 없이 global/ 경로 하나만 쓴다.
+bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
+key    = "global/billing/terraform.tfstate"
+region = "ap-northeast-2"

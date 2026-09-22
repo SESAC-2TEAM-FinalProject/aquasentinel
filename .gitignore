@@ -1,0 +1,7 @@
+# 팀 내부 공유 문서(계정 ID 등 민감 정보 포함 가능) — git에 올리지 않고 별도 메신저로 공유
+docs/
+*.pdf
+
+# macOS 메타파일
+.DS_Store
+**/.DS_Store

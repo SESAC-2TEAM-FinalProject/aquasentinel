@@ -1,0 +1,7 @@
+# 사용법: terraform init -backend-config=backend.hcl
+# 이 파일을 backend.hcl로 복사한 뒤 bucket 값을 bootstrap output으로 채운다.
+# backend.hcl은 .gitignore 대상이다 (계정마다 값이 다를 수 있음).
+
+bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
+key    = "dev/ap-northeast-2/network/terraform.tfstate"
+region = "ap-northeast-2"
