@@ -1,0 +1,2 @@
+# 사용법: terraform.tfvars로 복사 후 실제 도메인으로 채우기 (서울과 동일한 도메인)
+domain_name = "yourdomain.com"
