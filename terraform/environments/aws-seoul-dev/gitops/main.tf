@@ -85,6 +85,16 @@ module "eso" {
   oidc_provider_url = data.terraform_remote_state.eks.outputs.oidc_provider_url
 }
 
+data "terraform_remote_state" "observability_storage" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/observability-storage/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Terraform이 직접 설치하는 유일한 Helm 차트. 이후 모든 워크로드(ESO 포함)는
 # 이 Argo CD가 aquasentinel-gitops 레포를 보고 스스로 동기화한다.
@@ -119,6 +129,323 @@ resource "kubernetes_secret_v1" "gitops_repo_creds" {
   type = "Opaque"
 
   depends_on = [helm_release.argocd]
+}
+
+# ---------------------------------------------------------------------------
+# ESO/Loki/Thanos(Prometheus)의 ServiceAccount를 Terraform이 미리 만들어 IRSA
+# role-arn을 심어둔다 — GitOps 쪽(apps/*)은 serviceAccount.create=false로 이
+# 이름을 그대로 쓴다. role-arn은 리전마다 다른데, 이 값을 GitOps 매니페스트에
+# 직접 적으면 그 파일 자체가 리전별로 갈라져야 한다(2026-09-28 도쿄 재현성 테스트에서
+# 서울 ARN이 박혀 있던 걸 발견 — aquasentinel-gitops README "리전별로 달라지는 값"
+# 참고). Terraform은 이미 리전별로 정확한 값을 알고 있으므로 여기서 붙인다.
+# ---------------------------------------------------------------------------
+
+resource "kubernetes_namespace_v1" "external_secrets" {
+  metadata {
+    name = "external-secrets"
+  }
+}
+
+resource "kubernetes_service_account_v1" "external_secrets" {
+  metadata {
+    name      = "external-secrets"
+    namespace = kubernetes_namespace_v1.external_secrets.metadata[0].name
+    annotations = {
+      "eks.amazonaws.com/role-arn" = module.eso.role_arn
+    }
+  }
+}
+
+resource "kubernetes_namespace_v1" "monitoring" {
+  metadata {
+    name = "monitoring"
+  }
+}
+
+resource "kubernetes_service_account_v1" "loki" {
+  metadata {
+    name      = "loki"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+    annotations = {
+      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.observability_storage.outputs.loki_role_arn
+    }
+  }
+}
+
+# kube-prometheus-stack의 serviceAccount는 (loki/eso와 달리) 여기서 미리 안 만든다 —
+# 이 차트는 prometheus.serviceAccount.create=false면 kubelet ServiceMonitor 인증용
+# 토큰 시크릿 렌더링을 차트 레벨에서 막아버린다(helm template 에러, 2026-09-28 확인).
+# 그래서 kube_prometheus_stack_app 리소스에서 차트 기본 동작(create=true)에
+# annotation만 얹는다.
+
+# ---------------------------------------------------------------------------
+# manifests/ 기반 raw 매니페스트 중 리전별로 값이 달라지는 것들 — CNPG 오퍼레이터나
+# ESO 컨트롤러가 CR 스펙을 계속 재조정하는 대상이라, "SA만 미리 만들어두고 재사용"
+# 방식이 안 통한다(2026-09-28 발견). 그래서 이 Application들 자체를 apps/가 아니라
+# 여기서 직접 만든다. 서울은 git 원본이 이미 서울 값이라 patches가 비어 있고,
+# 도쿄(environments/aws-tokyo-dr/gitops/main.tf)는 같은 이름의 로컬에 실제 패치를
+# 채운다 — README "리전별로 달라지는 값" 참고.
+# ---------------------------------------------------------------------------
+
+locals {
+  patched_apps = {
+    "cloudnativepg-cluster" = {
+      path      = "manifests/cloudnativepg-cluster"
+      namespace = "aquasentinel-db"
+      patches   = []
+    }
+    "grafana-secret" = {
+      path      = "manifests/grafana-secret"
+      namespace = "monitoring"
+      patches   = []
+    }
+    "api-module-db-secret" = {
+      path      = "manifests/api-module-db-secret"
+      namespace = "api-module"
+      patches   = []
+    }
+  }
+}
+
+resource "kubernetes_manifest" "patched_app" {
+  for_each = local.patched_apps
+
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = each.key
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      source = merge(
+        {
+          repoURL        = local.gitops_repo_url
+          targetRevision = "main"
+          path           = each.value.path
+        },
+        length(each.value.patches) > 0 ? {
+          kustomize = {
+            patches = each.value.patches
+          }
+        } : {}
+      )
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = each.value.namespace
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd]
+}
+
+# Thanos(Prometheus 사이드카)의 오브젝트 스토리지 설정 — 버킷/엔드포인트/리전을
+# apps/kube-prometheus-stack의 Helm values에 직접 적지 않고, 이 시크릿을
+# existingSecret으로 참조하게 한다(차트가 objectStorageConfig.existingSecret을
+# 지원함 — .secret과 달리 리전별 값을 Helm values 밖에 둘 수 있다).
+resource "kubernetes_secret_v1" "thanos_objstore_config" {
+  metadata {
+    name      = "thanos-objstore-config"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+  }
+
+  data = {
+    "object-store.yaml" = yamlencode({
+      type = "S3"
+      config = {
+        bucket   = data.terraform_remote_state.observability_storage.outputs.bucket_name
+        endpoint = "s3.${var.region}.amazonaws.com"
+        region   = var.region
+      }
+      prefix = data.terraform_remote_state.observability_storage.outputs.thanos_prefix
+    })
+  }
+}
+
+# Loki는 원격 Helm 차트라(manifests/ 경로가 아님) 위 patched_app의 Kustomize
+# 패치가 적용될 git 파일이 없다 — 그래서 apps/에도 두지 않고, Application 전체
+# (Helm values 포함)를 여기서 리전별로 다시 구성한다. serviceAccount는 위에서
+# 미리 만든 것을 재사용(annotation 불필요), 버킷 이름과 리전만 리전별로 다르다.
+locals {
+  loki_values = <<-EOT
+    deploymentMode: SingleBinary
+
+    loki:
+      auth_enabled: false
+      commonConfig:
+        replication_factor: 1
+      storage:
+        type: s3
+        bucketNames:
+          chunks: ${data.terraform_remote_state.observability_storage.outputs.loki_bucket_name}
+          ruler: ${data.terraform_remote_state.observability_storage.outputs.loki_bucket_name}
+          admin: ${data.terraform_remote_state.observability_storage.outputs.loki_bucket_name}
+        s3:
+          region: ${var.region}
+      schemaConfig:
+        configs:
+          - from: "2024-01-01"
+            store: tsdb
+            object_store: s3
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+    singleBinary:
+      replicas: 1
+      persistence:
+        size: 10Gi
+        storageClass: gp2
+
+    serviceAccount:
+      create: false
+      name: loki
+
+    gateway:
+      enabled: false
+
+    read:
+      replicas: 0
+    write:
+      replicas: 0
+    backend:
+      replicas: 0
+
+    chunksCache:
+      enabled: false
+    resultsCache:
+      enabled: false
+  EOT
+}
+
+resource "kubernetes_manifest" "loki_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "loki"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      source = {
+        repoURL        = "https://grafana.github.io/helm-charts"
+        chart          = "loki"
+        targetRevision = "7.3.0"
+        helm = {
+          values = local.loki_values
+        }
+      }
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd, kubernetes_service_account_v1.loki]
+}
+
+# kube-prometheus-stack — Loki와 같은 이유로 Application 전체를 Terraform이 소유한다
+# (위 주석 참고). role-arn만 리전별로 다르고 나머지는 apps/에 있던 원본 그대로.
+locals {
+  kube_prometheus_stack_values = <<-EOT
+    grafana:
+      enabled: false
+
+    prometheus:
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: "${data.terraform_remote_state.observability_storage.outputs.thanos_role_arn}"
+
+      prometheusSpec:
+        retention: 2d
+
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: gp2
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 20Gi
+
+        thanos:
+          objectStorageConfig:
+            existingSecret:
+              name: thanos-objstore-config
+              key: object-store.yaml
+  EOT
+}
+
+resource "kubernetes_manifest" "kube_prometheus_stack_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "kube-prometheus-stack"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      source = {
+        repoURL        = "https://prometheus-community.github.io/helm-charts"
+        chart          = "kube-prometheus-stack"
+        targetRevision = "91.5.0"
+        helm = {
+          values = local.kube_prometheus_stack_values
+        }
+      }
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd, kubernetes_secret_v1.thanos_objstore_config]
 }
 
 # aquasentinel-gitops의 bootstrap/root-app.yaml과 내용이 동일해야 한다(수동 동기화).
