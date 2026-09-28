@@ -47,4 +47,12 @@ module "observability_storage" {
 
   # cnpg-system은 오퍼레이터 전용 네임스페이스라, 실제 DB Cluster는 분리한다.
   cloudnativepg_namespace = "aquasentinel-db"
+
+  # CNPG는 serviceAccountTemplate으로 이름을 새로 짓지 못하고, Cluster
+  # 리소스 이름(aquasentinel-pg, manifests/cloudnativepg-cluster/cluster.yaml)과
+  # 똑같은 이름의 서비스어카운트를 자동 생성해 쓴다 — 기본값
+  # "cloudnativepg-backup"과 실제로 달라서, 실제 페일오버 테스트 중
+  # WAL 아카이빙이 "sts:AssumeRoleWithWebIdentity" AccessDenied로 계속
+  # 실패하고 있었음을 뒤늦게 발견했다(트러스트 정책의 sub 조건 불일치).
+  cloudnativepg_service_account_name = "aquasentinel-pg"
 }

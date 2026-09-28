@@ -225,17 +225,16 @@ resource "aws_iam_role" "this" {
 data "aws_iam_policy_document" "access" {
   for_each = local.workloads
 
+  # prefix 조건 없이 허용한다 — barman-cloud(HeadBucket 호출, 파라미터에 prefix가
+  # 없음)가 s3:ListBucket과 같은 액션이라 조건을 걸면 매치가 안 돼 막힌다(CNPG
+  # 페일오버 테스트 중 "HeadBucket ... Forbidden"으로 실제 확인). 버킷 안 키 목록을
+  # 볼 수 있는 것뿐이고, 실제 객체 읽기/쓰기는 아래 ReadWriteOwnPrefix로 여전히
+  # 자기 prefix로만 제한된다.
   statement {
-    sid       = "ListOwnPrefix"
+    sid       = "ListBucket"
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.this.arn]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["${each.value.prefix}*"]
-    }
   }
 
   statement {
@@ -243,6 +242,17 @@ data "aws_iam_policy_document" "access" {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.this.arn}/${each.value.prefix}*"]
+  }
+
+  # barman-cloud(boto3 기반)가 리전 확인차 GetBucketLocation을 무조건 호출한다
+  # — 버킷 리전 정보만 반환하는 읽기 전용 액션이라 prefix로 좁힐 필요 없음.
+  # CNPG 페일오버 테스트 중 이게 빠져 WAL 아카이빙이 "Forbidden"으로 실패하는
+  # 것을 실제로 확인한 뒤 추가.
+  statement {
+    sid       = "GetBucketLocation"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [aws_s3_bucket.this.arn]
   }
 }
 
