@@ -39,7 +39,7 @@ variable "private_app_subnet_cidrs" {
 }
 
 variable "private_data_subnet_cidrs" {
-  description = "RDS, ElastiCache용."
+  description = "ElastiCache용 (관계형 DB는 CloudNativePG로 전환되어 K8s 워크로드로 이동, 이 서브넷을 쓰지 않음)."
   type        = list(string)
   default     = ["10.0.48.0/24", "10.0.49.0/24"]
 }

@@ -79,7 +79,7 @@ resource "aws_subnet" "private_app" {
 }
 
 # ---------------------------------------------------------------------------
-# Private Data — RDS, ElastiCache
+# Private Data — ElastiCache (관계형 DB는 RDS 대신 CloudNativePG로 전환, private-app 쪽 K8s 워크로드로 이동)
 # ---------------------------------------------------------------------------
 
 resource "aws_subnet" "private_data" {
