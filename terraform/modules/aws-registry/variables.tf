@@ -7,19 +7,21 @@ variable "environment" {
 }
 
 variable "repository_names" {
-  description = "계획서 11.1절 파드 인벤토리(어댑터 4종 + interpolation/prediction/evaluation/alert/status/aggregation) 기준 기본 서비스 목록."
+  description = <<-EOT
+    API 모듈 제작계획서(2026-09-28 최종안) 2.0.2절 이미지 이름 기준 — 어댑터별
+    분리 구조(adapter-*)와 interpolation-svc/prediction-svc/evaluation-svc
+    3분리는 이 계획서에서 5개 이미지(collector/processor/interpolation/
+    grading/evaluation)로 통합됐다. alert-svc/status-svc/aggregation-svc는
+    웹 서비스 소유(0.2절 범위 밖)라 이 목록에 넣지 않음 — 그 쪽 이미지 이름이
+    확정되면 별도로 추가.
+  EOT
   type        = list(string)
   default = [
-    "adapter-bulletin",
-    "adapter-tide-wt",
-    "adapter-line",
-    "adapter-fishery",
-    "interpolation-svc",
-    "prediction-svc",
-    "evaluation-svc",
-    "alert-svc",
-    "status-svc",
-    "aggregation-svc",
+    "api-module/collector",
+    "api-module/processor",
+    "api-module/interpolation",
+    "api-module/grading",
+    "api-module/evaluation",
   ]
 }
 
