@@ -27,23 +27,13 @@ variable "tfstate_bucket_region" {
   default = "ap-northeast-2"
 }
 
-variable "rds_instance_class" {
-  type    = string
-  default = "db.t3.micro"
-}
-
-variable "rds_multi_az" {
-  type    = bool
-  default = false
-}
-
-variable "rds_skip_final_snapshot" {
-  description = "false로 두면 destroy 시 최종 스냅샷을 남긴다 (계획서 18.5절)."
-  type        = bool
-  default     = false
-}
-
 variable "redis_node_type" {
   type    = string
   default = "cache.t3.micro"
+}
+
+variable "redis_automatic_failover_enabled" {
+  description = "도쿄 드릴 환경은 비용에 민감해 기본 false(단일 노드) 유지."
+  type        = bool
+  default     = false
 }
