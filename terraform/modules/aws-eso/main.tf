@@ -63,6 +63,11 @@ data "aws_iam_policy_document" "access" {
       "secretsmanager:PutSecretValue",
       "secretsmanager:TagResource",
       "secretsmanager:DeleteSecret",
+      # ESO의 PushSecret이 매 동기화마다 리소스 정책을 지우는 호출을 무조건
+      # 시도한다(리소스 정책이 없어도) — 실제 라이브 apply에서 AccessDenied로
+      # 확인된 후 추가.
+      "secretsmanager:DeleteResourcePolicy",
+      "secretsmanager:PutResourcePolicy",
     ]
     resources = ["arn:aws:secretsmanager:*:*:secret:${local.name_prefix}-api-module-*"]
   }
