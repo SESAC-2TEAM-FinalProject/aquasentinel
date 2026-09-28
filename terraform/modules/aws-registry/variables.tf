@@ -11,7 +11,7 @@ variable "repository_names" {
   type        = list(string)
   default = [
     "adapter-bulletin",
-    "adapter-coastal",
+    "adapter-tide-wt",
     "adapter-line",
     "adapter-fishery",
     "interpolation-svc",
