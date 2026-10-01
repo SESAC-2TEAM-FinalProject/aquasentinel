@@ -371,7 +371,7 @@ locals {
             {
               op    = "replace"
               path  = "/spec/client/redirectUris/0"
-              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}/*"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}/auth/callback"
             },
             {
               op    = "replace"
