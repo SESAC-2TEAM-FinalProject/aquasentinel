@@ -187,6 +187,16 @@ resource "kubernetes_service_account_v1" "loki" {
 # 채운다 — README "리전별로 달라지는 값" 참고.
 # ---------------------------------------------------------------------------
 
+data "terraform_remote_state" "dns" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/dns/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
 locals {
   patched_apps = {
     "cloudnativepg-cluster" = {
@@ -203,6 +213,25 @@ locals {
       path      = "manifests/api-module-db-secret"
       namespace = "api-module"
       patches   = []
+    }
+    # ACM 인증서 ARN은 서울/도쿄 둘 다 예측 불가능한 값이라, 다른 항목들과
+    # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway-api/loadbalancer-config.yaml
+    # 주석 참고).
+    "gateway-api" = {
+      path      = "manifests/gateway-api"
+      namespace = "ingress"
+      patches = [
+        {
+          target = { kind = "LoadBalancerConfiguration", name = "aquasentinel-alb-config" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/listenerConfigurations/0/defaultCertificate"
+              value = data.terraform_remote_state.dns.outputs.certificate_arn
+            }
+          ])
+        },
+      ]
     }
   }
 }
