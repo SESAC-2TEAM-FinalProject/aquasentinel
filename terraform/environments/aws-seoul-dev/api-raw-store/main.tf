@@ -37,6 +37,18 @@ data "terraform_remote_state" "eks" {
   }
 }
 
+# 도쿄 api-raw-store는 이 컴포넌트보다 먼저 apply돼 있어야 한다 — 복제 설정이
+# 도쿄 버킷 ARN을 참조하기 때문(DR 회의 2026-09-30 안건 7, A안).
+data "terraform_remote_state" "tokyo_api_raw_store" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.tokyo_environment}/${var.tokyo_region}/api-raw-store/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
 module "api_raw_store" {
   source = "../../../modules/aws-api-raw-store"
 
@@ -44,4 +56,7 @@ module "api_raw_store" {
   environment       = var.environment
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
   oidc_provider_url = data.terraform_remote_state.eks.outputs.oidc_provider_url
+
+  enable_cross_region_replication    = true
+  replication_destination_bucket_arn = data.terraform_remote_state.tokyo_api_raw_store.outputs.bucket_arn
 }

@@ -55,12 +55,25 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   }
 }
 
-# 버저닝은 켜지 않는다 — Thanos/Loki/Barman Cloud 전부 자체 리텐션 로직으로
-# 오래된 객체를 정리하므로, 버킷 버저닝까지 켜면 저장 비용만 이중으로 쌓인다.
+# 크로스리전 복제(S3 Cross-Region Replication)는 양쪽 버킷 모두 버전관리가
+# 켜져 있어야만 동작한다(AWS 하드 요구사항) — DR 회의(2026-09-30) 안건 7에서
+# 복제를 켜기로 확정하면서, 예전의 "비용 때문에 버저닝을 끈다"는 결정을
+# 되돌린다. 대신 아래 noncurrent-version-expiration 규칙으로 과거 버전이
+# 무기한 쌓이는 걸 막는다.
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.id
 
-# cloudnativepg/ prefix는 라이프사이클 규칙에서 제외한다. Barman Cloud가
-# 자기 retention-policy로 WAL/베이스 백업을 관리하므로, S3가 별도로 만료시키면
-# Barman이 모르는 사이 PITR 복구 가능 구간이 깨질 수 있다.
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# cloudnativepg/ prefix는 "현재 버전 만료(expiration)" 규칙에서는 계속 제외한다.
+# Barman Cloud가 자기 retention-policy로 WAL/베이스 백업을 관리하므로, S3가
+# 별도로 만료시키면 Barman이 모르는 사이 PITR 복구 가능 구간이 깨질 수 있다.
+# 다만 noncurrent-version-expiration(아래 별도 규칙)은 전체 버킷에 걸어야
+# 한다 — 안 그러면 Barman이 자기 리텐션으로 "지웠다"고 여긴 과거 버전이
+# 버저닝 때문에 S3에 그림자로 계속 남아 비용이 샌다.
 resource "aws_s3_bucket_lifecycle_configuration" "this" {
   bucket = aws_s3_bucket.this.id
 
@@ -77,6 +90,113 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     }
   }
 
+  rule {
+    id     = "noncurrent-version-expiration"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_expiration_days
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# S3 Cross-Region Replication — 서울(소스)에서만 켠다(enable_cross_region_
+# replication = true). 도쿄는 복제 대상(destination)일 뿐이라 이 블록이
+# 전부 count = 0으로 꺼진 채 버전관리만 적용받는다.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "replication_assume" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+    effect  = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "replication" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  name               = "${local.name_prefix}-observability-replication-role"
+  assume_role_policy = data.aws_iam_policy_document.replication_assume[0].json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "replication_access" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  statement {
+    sid       = "SourceBucketRead"
+    effect    = "Allow"
+    actions   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]
+    resources = [aws_s3_bucket.this.arn]
+  }
+
+  statement {
+    sid       = "SourceObjectVersionRead"
+    effect    = "Allow"
+    actions   = ["s3:GetObjectVersionForReplication", "s3:GetObjectVersionAcl", "s3:GetObjectVersionTagging"]
+    resources = ["${aws_s3_bucket.this.arn}/*"]
+  }
+
+  statement {
+    sid       = "DestinationReplicate"
+    effect    = "Allow"
+    actions   = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"]
+    resources = ["${var.replication_destination_bucket_arn}/*"]
+  }
+}
+
+resource "aws_iam_policy" "replication" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  name   = "${local.name_prefix}-observability-replication-policy"
+  policy = data.aws_iam_policy_document.replication_access[0].json
+  tags   = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "replication" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  role       = aws_iam_role.replication[0].name
+  policy_arn = aws_iam_policy.replication[0].arn
+}
+
+resource "aws_s3_bucket_replication_configuration" "this" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  # 복제는 버저닝이 켜진 버킷에서만 설정 가능하다는 AWS 요구사항을 Terraform
+  # 의존성 그래프에도 명시적으로 강제한다.
+  depends_on = [aws_s3_bucket_versioning.this]
+
+  bucket = aws_s3_bucket.this.id
+  role   = aws_iam_role.replication[0].arn
+
+  rule {
+    id     = "replicate-to-tokyo"
+    status = "Enabled"
+
+    filter {}
+
+    # Barman Cloud의 자체 리텐션이 지운 객체(delete marker)도 그대로 복제해야,
+    # 도쿄 쪽에 서울이 이미 정리한 과거 백업이 영영 안 지워지고 남는 걸 막는다.
+    delete_marker_replication {
+      status = "Enabled"
+    }
+
+    destination {
+      bucket        = var.replication_destination_bucket_arn
+      storage_class = "STANDARD"
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------

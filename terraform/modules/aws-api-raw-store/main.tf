@@ -43,6 +43,130 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   }
 }
 
+# 크로스리전 복제(S3 Cross-Region Replication)는 양쪽 버킷 모두 버전관리가
+# 켜져 있어야만 동작한다(AWS 하드 요구사항) — DR 회의(2026-09-30) 안건 7에서
+# 복제를 켜기로 확정하면서 추가한다.
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# 원문(raw) 자체의 보관 기간 정책은 여전히 미결(위 설명 참고) — 현재 버전에
+# expiration 규칙은 걸지 않는다. 다만 버저닝 때문에 생기는 과거 버전은 별개
+# 문제라, 여기만 정리한다. collector가 같은 키를 두 번 덮어쓸 일은 거의
+# 없지만(키 자체에 epoch_ms가 들어감), 혹시 모를 재시도/재처리로 생기는
+# 과거 버전까지 무기한 쌓이는 걸 막는다.
+resource "aws_s3_bucket_lifecycle_configuration" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  rule {
+    id     = "noncurrent-version-expiration"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_expiration_days
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# S3 Cross-Region Replication — 서울(소스)에서만 켠다. 도쿄는 복제 대상
+# (destination)일 뿐이라 이 블록이 전부 count = 0으로 꺼진 채 버전관리만
+# 적용받는다.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "replication_assume" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+    effect  = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "replication" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  name               = "${local.name_prefix}-raw-store-replication-role"
+  assume_role_policy = data.aws_iam_policy_document.replication_assume[0].json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "replication_access" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  statement {
+    sid       = "SourceBucketRead"
+    effect    = "Allow"
+    actions   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]
+    resources = [aws_s3_bucket.this.arn]
+  }
+
+  statement {
+    sid       = "SourceObjectVersionRead"
+    effect    = "Allow"
+    actions   = ["s3:GetObjectVersionForReplication", "s3:GetObjectVersionAcl", "s3:GetObjectVersionTagging"]
+    resources = ["${aws_s3_bucket.this.arn}/*"]
+  }
+
+  statement {
+    sid       = "DestinationReplicate"
+    effect    = "Allow"
+    actions   = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"]
+    resources = ["${var.replication_destination_bucket_arn}/*"]
+  }
+}
+
+resource "aws_iam_policy" "replication" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  name   = "${local.name_prefix}-raw-store-replication-policy"
+  policy = data.aws_iam_policy_document.replication_access[0].json
+  tags   = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "replication" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  role       = aws_iam_role.replication[0].name
+  policy_arn = aws_iam_policy.replication[0].arn
+}
+
+resource "aws_s3_bucket_replication_configuration" "this" {
+  count = var.enable_cross_region_replication ? 1 : 0
+
+  depends_on = [aws_s3_bucket_versioning.this]
+
+  bucket = aws_s3_bucket.this.id
+  role   = aws_iam_role.replication[0].arn
+
+  rule {
+    id     = "replicate-to-tokyo"
+    status = "Enabled"
+
+    filter {}
+
+    delete_marker_replication {
+      status = "Enabled"
+    }
+
+    destination {
+      bucket        = var.replication_destination_bucket_arn
+      storage_class = "STANDARD"
+    }
+  }
+}
+
 # ---------------------------------------------------------------------------
 # collector — 원문을 쓰고, 저장 직후 사전 읽기로 결과 코드만 확인한다
 # (제작계획서 2.3절) → PutObject + GetObject 둘 다 필요.

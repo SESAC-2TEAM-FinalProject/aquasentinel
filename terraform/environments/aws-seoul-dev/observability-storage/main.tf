@@ -37,6 +37,18 @@ data "terraform_remote_state" "eks" {
   }
 }
 
+# 도쿄 observability-storage는 이 컴포넌트보다 먼저 apply돼 있어야 한다 —
+# 복제 설정이 도쿄 버킷 ARN을 참조하기 때문(DR 회의 2026-09-30 안건 7, A안).
+data "terraform_remote_state" "tokyo_observability_storage" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.tokyo_environment}/${var.tokyo_region}/observability-storage/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
 module "observability_storage" {
   source = "../../../modules/aws-observability-storage"
 
@@ -55,4 +67,7 @@ module "observability_storage" {
   # WAL 아카이빙이 "sts:AssumeRoleWithWebIdentity" AccessDenied로 계속
   # 실패하고 있었음을 뒤늦게 발견했다(트러스트 정책의 sub 조건 불일치).
   cloudnativepg_service_account_name = "aquasentinel-pg"
+
+  enable_cross_region_replication    = true
+  replication_destination_bucket_arn = data.terraform_remote_state.tokyo_observability_storage.outputs.bucket_arn
 }
