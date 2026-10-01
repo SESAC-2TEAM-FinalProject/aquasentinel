@@ -538,6 +538,86 @@ resource "kubernetes_manifest" "kube_prometheus_stack_app" {
   depends_on = [helm_release.argocd, kubernetes_secret_v1.thanos_objstore_config]
 }
 
+# AWS Load Balancer Controller — 서울과 동일한 이유(environments/aws-seoul-dev/
+# gitops/main.tf 주석 참고), 값만 도쿄 것.
+data "terraform_remote_state" "network" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/network/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
+data "terraform_remote_state" "ingress" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/ingress/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
+locals {
+  aws_load_balancer_controller_values = <<-EOT
+    clusterName: ${data.terraform_remote_state.eks.outputs.cluster_name}
+    region: ${var.region}
+    vpcId: ${data.terraform_remote_state.network.outputs.vpc_id}
+
+    serviceAccount:
+      create: true
+      annotations:
+        eks.amazonaws.com/role-arn: "${data.terraform_remote_state.ingress.outputs.role_arn}"
+
+    controllerConfig:
+      featureGates:
+        ALBGatewayAPI: true
+  EOT
+}
+
+resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "aws-load-balancer-controller"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      source = {
+        repoURL        = "https://aws.github.io/eks-charts"
+        chart          = "aws-load-balancer-controller"
+        targetRevision = "3.5.0"
+        helm = {
+          values = local.aws_load_balancer_controller_values
+        }
+      }
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "kube-system"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd]
+}
+
 # aquasentinel-gitops의 bootstrap/root-app.yaml과 내용이 동일해야 한다(수동 동기화).
 resource "kubernetes_manifest" "root_app" {
   manifest = {

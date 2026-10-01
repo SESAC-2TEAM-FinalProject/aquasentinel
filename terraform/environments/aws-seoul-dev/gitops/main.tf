@@ -448,6 +448,94 @@ resource "kubernetes_manifest" "kube_prometheus_stack_app" {
   depends_on = [helm_release.argocd, kubernetes_secret_v1.thanos_objstore_config]
 }
 
+# AWS Load Balancer Controller — role-arn/clusterName/vpcId가 리전마다 달라
+# kube-prometheus-stack과 같은 이유로 Application 전체를 Terraform이 소유한다.
+# IAM 역할 자체는 modules/aws-ingress(environments/*/ingress)가 이미 만들어둠 —
+# 여기선 그 역할을 Helm values에 annotation으로 꽂기만 한다.
+#
+# controllerConfig.featureGates.ALBGatewayAPI: true — 안건 3(외부 진입점,
+# 2026-09-30, 잠정 Gateway API) 확정 방향에 대비해 켜둔다. 차트 버전 3.5.0
+# (컨트롤러 v3.5.0)부터 지원 확인(공식 values.yaml 기준). 단, Gateway API
+# CRD(GatewayClass/Gateway/HTTPRoute) 자체는 이 차트가 설치하지 않으므로
+# 별도 설치가 필요하다 — 다음 작업(서울 Gateway API 진입점 구축)에서 처리.
+data "terraform_remote_state" "network" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/network/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
+data "terraform_remote_state" "ingress" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/ingress/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
+locals {
+  aws_load_balancer_controller_values = <<-EOT
+    clusterName: ${data.terraform_remote_state.eks.outputs.cluster_name}
+    region: ${var.region}
+    vpcId: ${data.terraform_remote_state.network.outputs.vpc_id}
+
+    serviceAccount:
+      create: true
+      annotations:
+        eks.amazonaws.com/role-arn: "${data.terraform_remote_state.ingress.outputs.role_arn}"
+
+    controllerConfig:
+      featureGates:
+        ALBGatewayAPI: true
+  EOT
+}
+
+resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "aws-load-balancer-controller"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      source = {
+        repoURL        = "https://aws.github.io/eks-charts"
+        chart          = "aws-load-balancer-controller"
+        targetRevision = "3.5.0"
+        helm = {
+          values = local.aws_load_balancer_controller_values
+        }
+      }
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "kube-system"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd]
+}
+
 # aquasentinel-gitops의 bootstrap/root-app.yaml과 내용이 동일해야 한다(수동 동기화).
 resource "kubernetes_manifest" "root_app" {
   manifest = {
