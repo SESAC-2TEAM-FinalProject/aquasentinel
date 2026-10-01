@@ -27,12 +27,18 @@ provider "aws" {
   }
 }
 
-# 참고: 서울 ECR과 완전히 별개의 리포지토리다. 리전 간 이미지 복제(ECR replication
-# configuration)는 아직 구성하지 않았다 — 6주차 도쿄 페일오버 설계 시 필요 여부를
-# 다시 판단한다 (서울에서 push된 이미지를 그대로 쓸지, 복제를 켤지).
-module "registry" {
-  source = "../../../modules/aws-registry"
+# DR 회의(2026-09-30) 안건 5 — A안(Cross-Region Replication) 확정. ECR 복제는
+# 원본과 "정확히 같은 이름"으로 대상 리전에 레포를 자동 생성한다 — 그래서 여기서
+# 독자적인 이름(aquasentinel-dr-tokyo/*)으로 레포를 또 만들면, 실제 복제된
+# 이미지(aquasentinel-dev/*)와 이름이 어긋나 아무도 안 쓰는 빈 레포가 된다.
+# 그래서 이 컴포넌트는 더 이상 aws-registry 모듈을 호출하지 않고, 서울이
+# 복제해 넣어줄 레포의 URL을 그대로 이 리전 엔드포인트로 조합해서 출력만 한다.
+data "terraform_remote_state" "seoul_registry" {
+  backend = "s3"
 
-  project_name = var.project_name
-  environment  = var.environment
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.source_environment}/${var.source_region}/registry/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
 }

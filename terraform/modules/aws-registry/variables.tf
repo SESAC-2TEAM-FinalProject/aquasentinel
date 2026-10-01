@@ -46,3 +46,21 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "enable_cross_region_replication" {
+  description = <<-EOT
+    ECR 크로스리전 복제(aws_ecr_replication_configuration)는 AWS 계정 전체에
+    하나만 존재 가능한 싱글톤 리소스다 — 서울·도쿄 두 환경이 같은 모듈을
+    호출하더라도, 반드시 한쪽(서울, 소스 리전)에서만 true로 켜야 한다. 양쪽 다
+    켜면 Terraform이 같은 계정 설정을 두 state에서 동시에 관리하려다 충돌한다.
+    DR 회의(2026-09-30) 안건 5에서 A안으로 확정 — 도쿄는 이 값을 false로 둔다.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "replication_destination_region" {
+  description = "복제 대상 리전. enable_cross_region_replication이 true일 때만 사용된다."
+  type        = string
+  default     = ""
+}
