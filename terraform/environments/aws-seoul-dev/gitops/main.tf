@@ -260,6 +260,30 @@ locals {
             }
           ])
         },
+        # 대시보드 클라이언트의 redirect/webOrigin/appUrl — 대시보드는 apex
+        # 레코드(안건④)를 쓰기로 이미 정해져 있어 auth 서브도메인과 같은 도메인
+        # 값을 그대로 재사용한다(대시보드 HTTPRoute 자체는 네임스페이스 미정으로
+        # 보류 중이지만, Keycloak 클라이언트 등록은 선행해도 무방).
+        {
+          target = { kind = "KeycloakOIDCClient", name = "aquasentinel-dashboard" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/client/redirectUris/0"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}/*"
+            },
+            {
+              op    = "replace"
+              path  = "/spec/client/webOrigins/0"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}"
+            },
+            {
+              op    = "replace"
+              path  = "/spec/client/appUrl"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}"
+            }
+          ])
+        },
       ]
     }
   }

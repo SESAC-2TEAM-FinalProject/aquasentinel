@@ -363,6 +363,28 @@ locals {
             }
           ])
         },
+        # 대시보드 클라이언트의 redirect/webOrigin/appUrl — 서울 쪽과 같은
+        # 이유(apex가 대시보드 주소)로 같은 패치를 넣는다.
+        {
+          target = { kind = "KeycloakOIDCClient", name = "aquasentinel-dashboard" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/client/redirectUris/0"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}/*"
+            },
+            {
+              op    = "replace"
+              path  = "/spec/client/webOrigins/0"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}"
+            },
+            {
+              op    = "replace"
+              path  = "/spec/client/appUrl"
+              value = "https://${data.terraform_remote_state.dns.outputs.domain_name}"
+            }
+          ])
+        },
         {
           target = { kind = "ExternalSecret", name = "keycloak-db-credentials" }
           patch = jsonencode([
