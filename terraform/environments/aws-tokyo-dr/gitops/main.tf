@@ -664,7 +664,7 @@ locals {
     serviceAccount:
       create: true
       annotations:
-        eks.amazonaws.com/role-arn: "${data.terraform_remote_state.ingress.outputs.role_arn}"
+        eks.amazonaws.com/role-arn: "${data.terraform_remote_state.ingress.outputs.lbc_role_arn}"
 
     controllerConfig:
       featureGates:
