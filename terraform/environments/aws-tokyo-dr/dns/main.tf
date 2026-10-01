@@ -45,8 +45,10 @@ module "dns" {
   domain_name  = var.domain_name
 
   # Route53 헬스체크 + Failover 레코드(안건 4, DR 회의 2026-09-30) — 도쿄=SECONDARY
-  # (헬스체크 없이 PRIMARY 장애 시에만 응답)
+  # (헬스체크 없이 PRIMARY 장애 시에만 응답). apex/auth 호스트 목록은 서울과
+  # 반드시 동일해야 한다(같은 (name,type) 쌍에 PRIMARY/SECONDARY 짝이 맞아야 함).
   enable_failover_routing = true
+  failover_hostnames      = ["", "auth"]
   failover_role           = "SECONDARY"
   enable_health_check     = false
   cluster_name            = data.terraform_remote_state.eks.outputs.cluster_name

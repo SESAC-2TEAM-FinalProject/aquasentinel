@@ -233,6 +233,35 @@ locals {
         },
       ]
     }
+    # 실제 도메인(auth 서브도메인)도 cert ARN과 같은 이유로 패치한다 — 공개
+    # 레포에 실제 도메인을 직접 적지 않음. dns 모듈의 failover_hostnames에
+    # "auth"가 이미 들어있어야 이 레코드가 실제로 뜬다(environments/*/dns).
+    "keycloak" = {
+      path      = "manifests/keycloak"
+      namespace = "keycloak"
+      patches = [
+        {
+          target = { kind = "Keycloak", name = "aquasentinel-keycloak" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostname/hostname"
+              value = "auth.${data.terraform_remote_state.dns.outputs.domain_name}"
+            }
+          ])
+        },
+        {
+          target = { kind = "HTTPRoute", name = "keycloak" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostnames/0"
+              value = "auth.${data.terraform_remote_state.dns.outputs.domain_name}"
+            }
+          ])
+        },
+      ]
+    }
   }
 }
 

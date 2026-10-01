@@ -88,14 +88,23 @@ resource "aws_route53_health_check" "alb" {
   })
 }
 
-# 같은 zone·같은 이름(apex)에 서울/도쿄가 각자 자기 레코드를 set_identifier로
+# ""는 apex(루트 도메인, 대시보드), 나머지는 서브도메인(예: "auth"→Keycloak) —
+# 전부 같은 ALB(같은 Gateway)를 가리키므로 호스트 이름만 늘어나도 레코드
+# 구조는 그대로 재사용한다.
+locals {
+  failover_records = var.enable_failover_routing ? {
+    for h in var.failover_hostnames : h => h == "" ? var.domain_name : "${h}.${var.domain_name}"
+  } : {}
+}
+
+# 같은 zone에 호스트 이름별로 서울/도쿄가 각자 자기 레코드를 set_identifier로
 # 구분해서 등록한다 — PRIMARY(서울)는 health_check_id로 위 헬스체크를 참조하고,
 # SECONDARY(도쿄)는 헬스체크 없이 "PRIMARY가 죽으면 응답"으로만 동작한다.
 resource "aws_route53_record" "failover" {
-  count = var.enable_failover_routing ? 1 : 0
+  for_each = local.failover_records
 
   zone_id = data.aws_route53_zone.this.zone_id
-  name    = var.domain_name
+  name    = each.value
   type    = "A"
 
   set_identifier = var.environment

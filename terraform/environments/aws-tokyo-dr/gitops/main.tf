@@ -262,6 +262,16 @@ locals {
             }
           ])
         },
+        # Secrets Manager는 리전 서비스라 도쿄 전용 시크릿 이름으로 가리켜야
+        # 한다(아래 grafana-secret/api-module-db-secret과 같은 이유) — 다만
+        # 레코드가 실제로 쓰이는 건 도쿄가 Replica Cluster라 평소엔 읽기전용임.
+        # Primary로 승격된 뒤에야 의미가 생긴다.
+        {
+          target = { kind = "ExternalSecret", name = "keycloak-db-password" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-keycloak-db-password" }
+          ])
+        },
       ]
     }
     "grafana-secret" = {
@@ -323,6 +333,40 @@ locals {
               path  = "/spec/listenerConfigurations/0/defaultCertificate"
               value = data.terraform_remote_state.dns.outputs.certificate_arn
             }
+          ])
+        },
+      ]
+    }
+    # 실제 도메인은 cert ARN과 같은 이유로 패치(서울 쪽 주석 참고). DB 비밀번호
+    # remoteRef.key도 도쿄 전용 Secrets Manager 이름으로 바꾼다.
+    "keycloak" = {
+      path      = "manifests/keycloak"
+      namespace = "keycloak"
+      patches = [
+        {
+          target = { kind = "Keycloak", name = "aquasentinel-keycloak" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostname/hostname"
+              value = "auth.${data.terraform_remote_state.dns.outputs.domain_name}"
+            }
+          ])
+        },
+        {
+          target = { kind = "HTTPRoute", name = "keycloak" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostnames/0"
+              value = "auth.${data.terraform_remote_state.dns.outputs.domain_name}"
+            }
+          ])
+        },
+        {
+          target = { kind = "ExternalSecret", name = "keycloak-db-credentials" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-keycloak-db-password" }
           ])
         },
       ]

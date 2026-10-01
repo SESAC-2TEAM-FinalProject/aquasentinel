@@ -28,6 +28,12 @@ variable "enable_failover_routing" {
   default     = false
 }
 
+variable "failover_hostnames" {
+  description = "Failover 레코드를 만들 호스트 이름 목록. \"\"는 apex(루트 도메인), 나머지는 서브도메인 prefix(예: \"auth\" → auth.<domain_name>). enable_failover_routing=true일 때만 사용."
+  type        = list(string)
+  default     = [""]
+}
+
 variable "failover_role" {
   description = "PRIMARY 또는 SECONDARY. enable_failover_routing=true일 때만 사용 — 서울=PRIMARY, 도쿄=SECONDARY."
   type        = string

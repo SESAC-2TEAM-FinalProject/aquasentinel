@@ -45,7 +45,9 @@ module "dns" {
   domain_name  = var.domain_name
 
   # Route53 헬스체크 + Failover 레코드(안건 4, DR 회의 2026-09-30) — 서울=PRIMARY
+  # apex(대시보드) + auth(Keycloak, 인증 B안) 둘 다 같은 ALB로 failover
   enable_failover_routing = true
+  failover_hostnames      = ["", "auth"]
   failover_role           = "PRIMARY"
   enable_health_check     = true
   cluster_name            = data.terraform_remote_state.eks.outputs.cluster_name
