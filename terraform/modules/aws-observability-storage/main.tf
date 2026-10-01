@@ -390,3 +390,51 @@ resource "aws_iam_role_policy_attachment" "this" {
   role       = aws_iam_role.this[each.key].name
   policy_arn = aws_iam_policy.this[each.key].arn
 }
+
+# ---------------------------------------------------------------------------
+# 크로스리전 읽기 — CNPG Replica Cluster(방식 B)가 다른 리전의 observability
+# 버킷을 읽어야 하는 환경(도쿄)에서만 켠다. 새 역할을 만들지 않고 cloudnativepg
+# 역할(위 for_each에서 이미 생성됨)에 정책만 추가로 붙인다.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "cross_region_read" {
+  count = var.enable_cross_region_read ? 1 : 0
+
+  # barman-cloud의 HeadBucket 호출은 prefix 파라미터가 없어, 자기 버킷 정책
+  # (access 문서)과 같은 이유로 조건 없이 허용한다.
+  statement {
+    sid       = "CrossRegionListBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [var.cross_region_read_bucket_arn]
+  }
+
+  statement {
+    sid       = "CrossRegionReadPrefix"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${var.cross_region_read_bucket_arn}/${var.cross_region_read_prefix}*"]
+  }
+
+  statement {
+    sid       = "CrossRegionGetBucketLocation"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [var.cross_region_read_bucket_arn]
+  }
+}
+
+resource "aws_iam_policy" "cross_region_read" {
+  count = var.enable_cross_region_read ? 1 : 0
+
+  name   = "${local.name_prefix}-cloudnativepg-cross-region-read-policy"
+  policy = data.aws_iam_policy_document.cross_region_read[0].json
+  tags   = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "cross_region_read" {
+  count = var.enable_cross_region_read ? 1 : 0
+
+  role       = aws_iam_role.this["cloudnativepg"].name
+  policy_arn = aws_iam_policy.cross_region_read[0].arn
+}

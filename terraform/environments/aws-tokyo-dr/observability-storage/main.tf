@@ -37,6 +37,21 @@ data "terraform_remote_state" "eks" {
   }
 }
 
+# 서울 observability-storage는 이 컴포넌트보다 먼저 apply돼 있어야 한다 —
+# 도쿄 CNPG Replica Cluster(방식 B, manifests/cloudnativepg-cluster/
+# object-store-seoul-source.yaml)가 서울 버킷을 읽으려면 cloudnativepg IRSA
+# 역할에 그 버킷 읽기 권한이 필요하기 때문(DR 회의 2026-09-30 안건 7 연장선,
+# 작업 목록 15번).
+data "terraform_remote_state" "seoul_observability_storage" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.seoul_environment}/${var.seoul_region}/observability-storage/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
 module "observability_storage" {
   source = "../../../modules/aws-observability-storage"
 
@@ -55,4 +70,8 @@ module "observability_storage" {
   # 적이 없지만, 같은 매니페스트(manifests/cloudnativepg-cluster)를 그대로
   # 재사용할 것이므로 미리 반영해둔다.
   cloudnativepg_service_account_name = "aquasentinel-pg"
+
+  enable_cross_region_read     = true
+  cross_region_read_bucket_arn = data.terraform_remote_state.seoul_observability_storage.outputs.bucket_arn
+  cross_region_read_prefix     = data.terraform_remote_state.seoul_observability_storage.outputs.cloudnativepg_prefix
 }

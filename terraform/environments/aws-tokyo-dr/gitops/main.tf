@@ -209,9 +209,46 @@ locals {
           target = { kind = "ObjectStore", name = "aquasentinel-backup-store" }
           patch = jsonencode([
             {
-              op   = "replace"
-              path = "/spec/configuration/destinationPath"
+              op    = "replace"
+              path  = "/spec/configuration/destinationPath"
               value = "s3://${data.terraform_remote_state.observability_storage.outputs.bucket_name}/${data.terraform_remote_state.observability_storage.outputs.cloudnativepg_prefix}"
+            }
+          ])
+        },
+        # 도쿄만 Replica Cluster(방식 B, 2026-09-28 결정)로 만든다 — 서울의
+        # cluster.yaml 원본은 그대로 두고 여기서 op:add로 세 블록을 주입한다.
+        # externalClusters[].plugin.parameters는 plugin-barman-cloud 공식
+        # 예제(cluster-replica-log-shipping.yaml) 그대로: barmanObjectName은
+        # object-store-seoul-source.yaml의 ObjectStore 이름, serverName은
+        # 서울 Cluster의 metadata.name(백업이 그 이름으로 버킷에 쌓여있음).
+        {
+          target = { kind = "Cluster", name = "aquasentinel-pg" }
+          patch = jsonencode([
+            {
+              op    = "add"
+              path  = "/spec/bootstrap"
+              value = { recovery = { source = "seoul" } }
+            },
+            {
+              op    = "add"
+              path  = "/spec/replica"
+              value = { enabled = true, source = "seoul" }
+            },
+            {
+              op   = "add"
+              path = "/spec/externalClusters"
+              value = [
+                {
+                  name = "seoul"
+                  plugin = {
+                    name = "barman-cloud.cloudnative-pg.io"
+                    parameters = {
+                      barmanObjectName = "aquasentinel-pg-seoul-source"
+                      serverName       = "aquasentinel-pg"
+                    }
+                  }
+                }
+              ]
             }
           ])
         },

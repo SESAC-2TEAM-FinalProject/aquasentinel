@@ -95,6 +95,29 @@ variable "replication_destination_bucket_arn" {
   default     = ""
 }
 
+variable "enable_cross_region_read" {
+  description = <<-EOT
+    도쿄처럼 다른 리전의 observability 버킷(cloudnativepg/ prefix)을 읽어야
+    하는 환경에서만 true로 켠다 — CNPG Replica Cluster(방식 B)가 서울의
+    WAL/베이스 백업을 읽어 복구하려면 cloudnativepg IRSA 역할에 이 권한이
+    필요하다(DR 회의 2026-09-30 안건 7 연장선).
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "cross_region_read_bucket_arn" {
+  description = "읽기 전용으로 접근할 원격 리전 observability 버킷 ARN. enable_cross_region_read가 true일 때만 사용된다."
+  type        = string
+  default     = ""
+}
+
+variable "cross_region_read_prefix" {
+  description = "원격 버킷 안에서 읽기를 허용할 prefix(예: cloudnativepg/). enable_cross_region_read가 true일 때만 사용된다."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
