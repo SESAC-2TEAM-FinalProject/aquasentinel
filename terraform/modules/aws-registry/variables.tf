@@ -11,9 +11,11 @@ variable "repository_names" {
     API 모듈 제작계획서(2026-09-28 최종안) 2.0.2절 이미지 이름 기준 — 어댑터별
     분리 구조(adapter-*)와 interpolation-svc/prediction-svc/evaluation-svc
     3분리는 이 계획서에서 5개 이미지(collector/processor/interpolation/
-    grading/evaluation)로 통합됐다. alert-svc/status-svc/aggregation-svc는
-    웹 서비스 소유(0.2절 범위 밖)라 이 목록에 넣지 않음 — 그 쪽 이미지 이름이
-    확정되면 별도로 추가.
+    grading/evaluation)로 통합됐다.
+
+    웹 서비스(aquasentinel-web 레포) 이미지 3종(web-frontend/status-svc/
+    ocean-batch)은 2026-10-01 이미지 이름 확정(HANDOFF.md 1절)에 따라 추가함.
+    alert-svc는 아직 미구현이라 레포만 안 만듦 — 이미지가 생기면 추가.
   EOT
   type        = list(string)
   default = [
@@ -22,6 +24,9 @@ variable "repository_names" {
     "api-module/interpolation",
     "api-module/grading",
     "api-module/evaluation",
+    "web-frontend",
+    "status-svc",
+    "ocean-batch",
   ]
 }
 
