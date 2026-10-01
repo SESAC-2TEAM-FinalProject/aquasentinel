@@ -1,2 +1,3 @@
 # 사용법: terraform.tfvars로 복사 후 실제 도메인으로 채우기
-domain_name = "yourdomain.com"
+domain_name    = "yourdomain.com"
+tfstate_bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"

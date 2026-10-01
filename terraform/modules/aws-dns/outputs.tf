@@ -10,3 +10,13 @@ output "zone_id" {
 output "domain_name" {
   value = var.domain_name
 }
+
+output "health_check_id" {
+  description = "enable_health_check=false면 null."
+  value       = var.enable_health_check ? aws_route53_health_check.alb[0].id : null
+}
+
+output "alb_dns_name" {
+  description = "enable_failover_routing=false면 null."
+  value       = var.enable_failover_routing ? data.aws_lb.gateway[0].dns_name : null
+}

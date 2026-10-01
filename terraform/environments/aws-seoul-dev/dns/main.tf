@@ -27,10 +27,26 @@ provider "aws" {
   }
 }
 
+data "terraform_remote_state" "eks" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/eks/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
 module "dns" {
   source = "../../../modules/aws-dns"
 
   project_name = var.project_name
   environment  = var.environment
   domain_name  = var.domain_name
+
+  # Route53 헬스체크 + Failover 레코드(안건 4, DR 회의 2026-09-30) — 서울=PRIMARY
+  enable_failover_routing = true
+  failover_role           = "PRIMARY"
+  enable_health_check     = true
+  cluster_name            = data.terraform_remote_state.eks.outputs.cluster_name
 }
