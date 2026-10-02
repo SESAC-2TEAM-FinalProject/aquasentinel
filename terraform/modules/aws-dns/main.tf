@@ -73,13 +73,18 @@ data "aws_lb" "gateway" {
 
 # PRIMARY 리전(서울)에만 켠다 — Failover 레코드가 이 결과를 따라 서울/도쿄를
 # 전환한다.
+#
+# type=TCP(포트 443 리스닝 여부만 확인) — 원래 HTTPS+경로("/")로 ALB 원본
+# DNS 이름에 직접 요청했는데, Gateway API는 호스트 기반 라우팅만 처리해서
+# 이 Host 헤더와 매칭되는 HTTPRoute가 애초에 존재할 수 없어 항상 404였다
+# (실배포 중 발견한 버그, 팀 공유 문서 참고). 리전 전체 장애 감지엔 TCP로
+# 충분하다.
 resource "aws_route53_health_check" "alb" {
   count = var.enable_health_check ? 1 : 0
 
   fqdn              = data.aws_lb.gateway[0].dns_name
   port              = 443
-  type              = "HTTPS"
-  resource_path     = var.health_check_path
+  type              = "TCP"
   failure_threshold = 3
   request_interval  = 30
 

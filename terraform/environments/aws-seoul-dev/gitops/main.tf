@@ -14,6 +14,14 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 3.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.11"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 
   backend "s3" {
@@ -616,6 +624,29 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
   }
 
   depends_on = [helm_release.argocd]
+}
+
+# LBC + Gateway API CRD 부트스트랩 경쟁 조건(2026-10-02 서울 재기동 때 재현
+# 확인) — LBC는 프로세스 시작 시 딱 한 번만 Gateway API CRD 존재 여부를
+# 확인하고 이후 재확인하지 않는다. Argo CD가 aws-load-balancer-controller와
+# gateway-api-crds를 동시에 설치하다 보니, LBC가 체크하는 시점에 CRD가 아직
+# 없으면 그 프로세스는 평생 "Gateway API 미지원" 상태로 굳어버린다.
+#
+# Argo CD sync-wave로 순서를 강제하려 했으나, 두 Application이 같은 부모
+# (App-of-Apps) 아래 있지 않아 sync-wave가 적용되지 않는다는 걸 확인했다 —
+# 그래서 Terraform에 자동 복구 로직을 추가한다(사람이 수동으로
+# kubectl rollout restart를 안 쳐도 되게).
+resource "time_sleep" "wait_for_lbc_bootstrap" {
+  depends_on      = [kubernetes_manifest.aws_load_balancer_controller_app, kubernetes_manifest.root_app]
+  create_duration = "60s"
+}
+
+resource "null_resource" "restart_lbc_for_gateway_api" {
+  depends_on = [time_sleep.wait_for_lbc_bootstrap]
+
+  provisioner "local-exec" {
+    command = "kubectl --server=${data.terraform_remote_state.eks.outputs.cluster_endpoint} --token=${data.aws_eks_cluster_auth.this.token} --insecure-skip-tls-verify=true -n kube-system rollout restart deployment aws-load-balancer-controller"
+  }
 }
 
 # aquasentinel-gitops의 bootstrap/root-app.yaml과 내용이 동일해야 한다(수동 동기화).

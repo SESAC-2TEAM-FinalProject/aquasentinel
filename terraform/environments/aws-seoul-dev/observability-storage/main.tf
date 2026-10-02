@@ -39,7 +39,12 @@ data "terraform_remote_state" "eks" {
 
 # 도쿄 observability-storage는 이 컴포넌트보다 먼저 apply돼 있어야 한다 —
 # 복제 설정이 도쿄 버킷 ARN을 참조하기 때문(DR 회의 2026-09-30 안건 7, A안).
+#
+# count = 0 # TEMP-BOOTSTRAP: 도쿄 재구축 후 1로 복원 — 도쿄를 통째로
+# 삭제한 상태(2026-10-01)라 이 remote_state를 그냥 두면 서울 plan 자체가
+# "no state file" 에러로 깨진다. 도쿄 재구축 후 1로 되돌릴 것.
 data "terraform_remote_state" "tokyo_observability_storage" {
+  count   = 0 # TEMP-BOOTSTRAP: 도쿄 재구축 후 1로 복원
   backend = "s3"
 
   config = {
@@ -68,6 +73,6 @@ module "observability_storage" {
   # 실패하고 있었음을 뒤늦게 발견했다(트러스트 정책의 sub 조건 불일치).
   cloudnativepg_service_account_name = "aquasentinel-pg"
 
-  enable_cross_region_replication    = true
-  replication_destination_bucket_arn = data.terraform_remote_state.tokyo_observability_storage.outputs.bucket_arn
+  enable_cross_region_replication    = false # TEMP-BOOTSTRAP: 도쿄 재구축 후 true로 복원
+  replication_destination_bucket_arn = one(data.terraform_remote_state.tokyo_observability_storage[*].outputs.bucket_arn)
 }
