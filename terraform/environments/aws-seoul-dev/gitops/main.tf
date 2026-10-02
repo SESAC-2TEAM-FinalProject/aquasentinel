@@ -294,6 +294,27 @@ locals {
         },
       ]
     }
+    # 대시보드(웹 서비스) HTTPRoute — keycloak과 같은 이유로 실제 도메인을
+    # 직접 적지 않고 패치로 주입한다. apex 레코드(안건④)를 쓰기로 이미
+    # 정해져 있어 서브도메인 접두사 없이 domain_name 그대로 쓴다(auth와
+    # 달리 "https://" 접두사도 없음 — HTTPRoute hostnames는 호스트 이름만).
+    # 2026-10-02 서울 스모크테스트 때 네임스페이스(web)가 정해져서 채움.
+    "web" = {
+      path      = "manifests/web"
+      namespace = "web"
+      patches = [
+        {
+          target = { kind = "HTTPRoute", name = "aquasentinel-web" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostnames/0"
+              value = data.terraform_remote_state.dns.outputs.domain_name
+            }
+          ])
+        },
+      ]
+    }
   }
 }
 
