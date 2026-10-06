@@ -262,6 +262,51 @@ locals {
       namespace = "api-module"
       patches   = []
     }
+    # 수집기 전용 공공 API 인증키(DTRECENT_KEY·NIFS_KEY_*) ExternalSecret —
+    # api-module-db-secret과 같은 이유(Secrets Manager가 리전 서비스)로 여기
+    # 소속. 서울은 git 원본이 이미 서울 값이라 patches가 비어있다.
+    "api-module-collector-secrets" = {
+      path      = "manifests/api-module-collector-secrets"
+      namespace = "api-module"
+      patches   = []
+    }
+    # api-module 워크로드 5종 — 매니페스트에 ECR 이미지 URL이
+    # "<계정>.dkr.ecr.ap-northeast-2.amazonaws.com/..."로 리전이 박혀있다.
+    # 도쿄는 registry/main.tf가 서울 레포를 Cross-Region Replication(DR 회의
+    # 2026-09-30, 안건5 A안)한 것을 그대로 쓰므로, 계정·레포 이름은 같고
+    # ".ecr.ap-northeast-2." 부분만 도쿄 리전으로 바뀐다 — cloudnativepg-cluster와
+    # 같은 패턴. 서울은 git 원본이 이미 서울 값이라 patches가 비어있다.
+    "api-module-collector" = {
+      path      = "manifests/api-module-collector"
+      namespace = "api-module"
+      patches   = []
+    }
+    "api-module-processor" = {
+      path      = "manifests/api-module-processor"
+      namespace = "api-module"
+      patches   = []
+    }
+    "api-module-interpolation" = {
+      path      = "manifests/api-module-interpolation"
+      namespace = "api-module"
+      patches   = []
+    }
+    "api-module-grading" = {
+      path      = "manifests/api-module-grading"
+      namespace = "api-module"
+      patches   = []
+    }
+    "api-module-evaluation" = {
+      path      = "manifests/api-module-evaluation"
+      namespace = "api-module"
+      patches   = []
+    }
+    # processor 이미지를 재사용(완전성 검사 — processor와 같은 ECR 레포).
+    "api-module-completeness-check" = {
+      path      = "manifests/api-module-completeness-check"
+      namespace = "api-module"
+      patches   = []
+    }
     # ACM 인증서 ARN은 서울/도쿄 둘 다 예측 불가능한 값이라, 다른 항목들과
     # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway-api/loadbalancer-config.yaml
     # 주석 참고).
