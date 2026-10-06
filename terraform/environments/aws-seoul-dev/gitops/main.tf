@@ -103,6 +103,46 @@ data "terraform_remote_state" "observability_storage" {
   }
 }
 
+data "terraform_remote_state" "api_raw_store" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "${var.environment}/${var.region}/api-raw-store/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
+# api-module의 collector·processor ServiceAccount — loki/eso와 같은 이유로
+# Terraform이 미리 만들어 IRSA role-arn을 심어둔다(2026-10-06). api-module
+# 네임스페이스 자체는 patched_app "api-module-db-secret"이 CreateNamespace=true로
+# 먼저 만들므로 여기서 kubernetes_namespace_v1은 만들지 않는다(이중 소유 충돌 방지).
+# 이름은 modules/aws-api-raw-store의 기본값(collector_service_account_name=
+# "collector", processor_service_account_name="processor")과 반드시 일치해야
+# IRSA 신뢰조건(sub)이 맞는다 — reprocess Job과 completeness-check Deployment도
+# processor 이미지를 쓰므로 이 processor SA를 그대로 공유한다(모듈팀 2026-10-06
+# 회신 질문에 대한 답 — processor_role_arn 출력 설명에 이미 "reprocess Job 포함"으로
+# 명시돼 있음. completeness-check도 같은 이미지라 동일하게 적용).
+resource "kubernetes_service_account_v1" "api_module_collector" {
+  metadata {
+    name      = "collector"
+    namespace = "api-module"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.api_raw_store.outputs.collector_role_arn
+    }
+  }
+}
+
+resource "kubernetes_service_account_v1" "api_module_processor" {
+  metadata {
+    name      = "processor"
+    namespace = "api-module"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.api_raw_store.outputs.processor_role_arn
+    }
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Terraform이 직접 설치하는 유일한 Helm 차트. 이후 모든 워크로드(ESO 포함)는
 # 이 Argo CD가 aquasentinel-gitops 레포를 보고 스스로 동기화한다.
