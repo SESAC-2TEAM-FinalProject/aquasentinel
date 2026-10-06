@@ -47,9 +47,9 @@ module "dns" {
   # Route53 헬스체크 + Failover 레코드(안건 4, DR 회의 2026-09-30) — 서울=PRIMARY
   # apex(대시보드) + auth(Keycloak, 인증 B안) 둘 다 같은 ALB로 failover
   #
-  # 2단계 적용 완료(2026-10-02) — 서울 재기동 후 ALB가 실제로 떠 있는 걸
-  # 확인한 뒤 true로 복원. 1단계(TEMP-BOOTSTRAP)에서 순환 의존 때문에
-  # false로 뒀던 걸 되돌리는 것.
+  # 2단계 적용 완료(2026-10-06) — gitops 재적용 후 ALB가 실제로 뜬 걸 확인한
+  # 뒤 true로 복원. 1단계(TEMP-BOOTSTRAP)에서 순환 의존 때문에 false로
+  # 뒀던 걸 되돌리는 것.
   enable_failover_routing = true
   failover_hostnames      = ["", "auth"]
   failover_role           = "PRIMARY"
