@@ -583,6 +583,12 @@ locals {
       prometheusSpec:
         retention: 2d
 
+        # 서울과 동일 수정(2026-10-07) — release 라벨 기본 셀렉터 때문에 NATS
+        # PodMonitor가 수집 안 되던 문제. 상세 사유는 서울 environments 주석 참고.
+        podMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
+
         storageSpec:
           volumeClaimTemplate:
             spec:

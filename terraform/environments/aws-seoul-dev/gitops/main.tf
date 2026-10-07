@@ -586,6 +586,15 @@ locals {
       prometheusSpec:
         retention: 2d
 
+        # 기본값(true)이면 release: kube-prometheus-stack 라벨이 있는
+        # PodMonitor/ServiceMonitor/PrometheusRule만 인식한다 — NATS 차트가
+        # 만드는 PodMonitor(promExporter.podMonitor.enabled=true)에 이 라벨이
+        # 없어 실제로는 수집이 안 되고 있었음(2026-10-07 발견). 클러스터가
+        # 하나뿐이라 전체 매칭으로 바꾼다.
+        podMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
+
         storageSpec:
           volumeClaimTemplate:
             spec:
