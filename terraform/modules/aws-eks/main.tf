@@ -112,8 +112,13 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
 
 # ---------------------------------------------------------------------------
 # 노드그룹 — 커스텀 launch template으로 max-pods를 EKS 관리형 부트스트랩에 병합한다.
-# AMI를 직접 지정하지 않으므로 EKS가 관리형 AMI를 그대로 쓰고, user_data는
-# 부트스트랩 스크립트에 추가 kubelet 인자로 병합된다.
+# AMI를 직접 지정하지 않으므로 EKS가 관리형 AMI(기본값 AL2023_x86_64_STANDARD)를
+# 그대로 쓴다. AL2023은 `/etc/eks/bootstrap.sh`(AL2 전용 레거시 스크립트) 자체가
+# 없어 그 스크립트를 호출하는 user_data는 조용히 실패한다(2026-10-07 서울 재구축
+# 테스트에서 실제로 발견 — Prefix Delegation은 vpc-cni 애드온에서 켜졌는데도
+# 노드가 기본 max-pods 35로 등록돼 두 노드가 꽉 차서 파드가 Pending에 멈췄음).
+# AL2023은 `nodeadm`의 NodeConfig(YAML, MIME 파트 Content-Type은
+# application/node.eks.aws)로 병합해야 한다.
 # ---------------------------------------------------------------------------
 
 resource "aws_launch_template" "node" {
@@ -125,10 +130,15 @@ resource "aws_launch_template" "node" {
     Content-Type: multipart/mixed; boundary="==BOUNDARY=="
 
     --==BOUNDARY==
-    Content-Type: text/x-shellscript; charset="us-ascii"
+    Content-Type: application/node.eks.aws
 
-    #!/bin/bash
-    /etc/eks/bootstrap.sh ${var.cluster_name} --kubelet-extra-args '--max-pods=${var.max_pods_per_node}'
+    ---
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      kubelet:
+        config:
+          maxPods: ${var.max_pods_per_node}
 
     --==BOUNDARY==--
   EOT
