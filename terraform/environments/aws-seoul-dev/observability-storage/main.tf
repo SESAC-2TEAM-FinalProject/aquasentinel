@@ -73,6 +73,12 @@ module "observability_storage" {
   # 실패하고 있었음을 뒤늦게 발견했다(트러스트 정책의 sub 조건 불일치).
   cloudnativepg_service_account_name = "aquasentinel-pg"
 
+  # 모듈 기본값 "thanos"는 실제와 다르다 — kube-prometheus-stack 차트가 자동
+  # 생성하는 Prometheus ServiceAccount 이름 그대로 써야 한다(cloudnativepg와
+  # 같은 이유로 트러스트 정책 sub 불일치, 2026-10-08 thanos-sidecar S3
+  # Access Denied로 실제 확인).
+  thanos_service_account_name = "kube-prometheus-stack-prometheus"
+
   enable_cross_region_replication    = false # TEMP-BOOTSTRAP: 도쿄 재구축 후 true로 복원
   replication_destination_bucket_arn = one(data.terraform_remote_state.tokyo_observability_storage[*].outputs.bucket_arn)
 }
