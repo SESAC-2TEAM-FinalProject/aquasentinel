@@ -209,12 +209,29 @@ apply:tokyo-persistent:
   allow_failure: false
 
 # ---------------------------------------------------------------------------
-# 도쿄 DR(rebuild/1~4) — 자동 트리거 전혀 없음(changes 조건 자체가 없음). 모든
-# 잡이 항상 when: manual로만 파이프라인에 노출되고, 트리거하지 않으면
-# 파이프라인을 막지 않도록 allow_failure: true.
+# 도쿄 DR(rebuild/1~4) — plan/apply는 자동 트리거 전혀 없음(changes 조건 자체가
+# 없음, when: manual만). validate는 예외 — AWS 자격증명이 필요 없는 공짜 검증이라
+# 서울/도쿄 persistent와 동일하게 changes 기반으로 자동 실행한다(2026-10-10,
+# 실제 파이프라인 첫 실행에서 이 잡이 빠진 걸 발견해 추가).
 # ---------------------------------------------------------------------------
 .tokyo_dr_matrix: &tokyo_dr_matrix
   - COMPONENT_PATH: [rebuild/1-network, rebuild/2-cluster, rebuild/3-gitops, rebuild/4-edge]
+
+.tokyo_dr_changes: &tokyo_dr_changes
+  - terraform/tokyo/${COMPONENT_PATH}/**/*
+  - terraform/modules/**/*
+
+validate:tokyo-dr:
+  stage: validate
+  script:
+    - cd terraform/tokyo/${COMPONENT_PATH}
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+  parallel:
+    matrix: *tokyo_dr_matrix
+  rules:
+    - changes: *tokyo_dr_changes
 
 plan:tokyo-dr:
   extends: .aws_oidc_plan
