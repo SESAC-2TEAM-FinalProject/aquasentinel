@@ -21,10 +21,10 @@ terraform/
     └── rebuild/                도쿄 DR 클러스터. 평소엔 안 띄워도 됨(destroy 가능)
 ```
 
-구 `environments/aws-seoul-dev/*`는 마이그레이션 완료 후 삭제 예정(Phase G,
-아직 미완료) — 현재는 registry/observability-storage/api-raw-store 세
-컴포넌트만 실제 리소스를 갖고 있었고, 전부 `seoul/persistent`로 이관되어
-빈 상태(`data.aws_caller_identity`만 남은 깡통 state)다.
+구 `environments/`는 삭제 완료(Phase G, 2026-10-10) — registry/
+observability-storage/api-raw-store 세 컴포넌트만 실제 리소스를 갖고
+있었고, 전부 `seoul/persistent`로 이관(import)됐다. 나머지 컴포넌트는
+전부 빈 state였음을 삭제 전에 S3에서 직접 확인했다.
 
 ## 모듈(8개)
 
@@ -38,10 +38,6 @@ terraform/
 | `aws-irsa` | 워크로드 IRSA Role (community submodule 래퍼, D5) |
 | `aws-registry` | ECR 레포 + 크로스리전 복제 |
 | `aws-cicd` | GitLab.com 직접 OIDC → AWS Role (Terraform 레포 CI 전용) |
-
-`modules/aws-eso`는 구 `environments/aws-seoul-dev/gitops`만 참조하는
-레거시 모듈이다 — 새 구조(`{seoul,tokyo}/rebuild/2-cluster`의 `aws-irsa`
-호출)는 쓰지 않는다. 구 `environments/` 삭제(Phase G) 때 같이 지운다.
 
 각 모듈 `README.md`는 `terraform-docs`로 생성 — 인터페이스가 바뀌면 다시
 생성할 것:
