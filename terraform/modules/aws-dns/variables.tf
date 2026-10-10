@@ -6,6 +6,12 @@ variable "environment" {
   type = string
 }
 
+variable "create_certificate" {
+  description = "true면 ACM 인증서를 발급한다(persistent 컴포넌트). false면 다른 호출(4-edge)이 이미 만든 인증서가 있다고 가정하고 이 모듈은 레코드만 다룬다."
+  type        = bool
+  default     = true
+}
+
 variable "domain_name" {
   description = "이미 Route53에 존재하는 Hosted Zone 이름 (apex 그대로 사용). 나중에 프로젝트 전용 도메인을 구매하면 이 값만 바꾸면 된다."
   type        = string
