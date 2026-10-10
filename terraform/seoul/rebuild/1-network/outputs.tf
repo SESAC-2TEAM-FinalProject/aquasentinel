@@ -1,3 +1,6 @@
+# 아래 전부 2-cluster가 data.terraform_remote_state.network로 읽어가는 값들이다
+# (subnet_ids는 EKS 노드그룹/control plane 배치에, vpc_id는 Redis 보안그룹에 쓰임).
+
 output "vpc_id" {
   value = module.network.vpc_id
 }
