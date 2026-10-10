@@ -6,6 +6,14 @@ output "bucket_names" {
   value = module.storage.bucket_names
 }
 
+output "thanos_prefix" {
+  value = local.thanos_prefix
+}
+
+output "cloudnativepg_prefix" {
+  value = local.cloudnativepg_prefix
+}
+
 output "certificate_arn" {
   value = module.dns.certificate_arn
 }

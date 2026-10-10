@@ -34,6 +34,14 @@ provider "aws" {
   }
 }
 
+locals {
+  # 서울 persistent가 복제해 넣는 prefix와 반드시 같은 값이어야 한다(S3 복제는
+  # 키를 그대로 복사하므로). 2-cluster/3-gitops가 이 output을 그대로 참조해
+  # 값이 한쪽만 바뀌는 사고를 막는다(seoul/persistent와 동일 패턴).
+  thanos_prefix        = "thanos/"
+  cloudnativepg_prefix = "cloudnativepg/"
+}
+
 module "storage" {
   source = "../../modules/aws-storage"
 
