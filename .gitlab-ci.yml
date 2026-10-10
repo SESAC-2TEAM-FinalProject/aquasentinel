@@ -148,6 +148,12 @@ apply:seoul:
   script:
     - cd terraform/seoul/${COMPONENT_PATH}
     - terraform init -backend-config=backend.hcl -input=false
+    # 3-gitops의 argoproj.io Application(kubernetes_manifest)이 Argo CD 자신이
+    # 설치하는 CRD를 참조한다 — plan이 전체 그래프를 미리 스키마 검증하므로
+    # 같은 apply 안에서 depends_on만으로는 "CRD가 아직 없음" 에러를 못 피한다
+    # (kubernetes_manifest의 잘 알려진 구조적 한계). helm_release.argocd를
+    # 먼저 target apply해서 CRD부터 등록시킨다 — 이미 설치돼 있으면(재시도) no-op.
+    - if [ "$COMPONENT_PATH" = "rebuild/3-gitops" ]; then terraform apply -target=helm_release.argocd -input=false -auto-approve; fi
     - terraform apply -input=false -auto-approve
   parallel:
     matrix: *seoul_matrix
@@ -252,6 +258,8 @@ apply:tokyo-dr:
   script:
     - cd terraform/tokyo/${COMPONENT_PATH}
     - terraform init -backend-config=backend.hcl -input=false
+    # apply:seoul의 3-gitops 사전 target apply와 동일한 이유(CRD 선행 설치).
+    - if [ "$COMPONENT_PATH" = "rebuild/3-gitops" ]; then terraform apply -target=helm_release.argocd -input=false -auto-approve; fi
     - terraform apply -input=false -auto-approve
   parallel:
     matrix: *tokyo_dr_matrix
