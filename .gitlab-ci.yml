@@ -1,0 +1,243 @@
+# Terraform 레포 CI — GitLab.com 공유 러너에서 실행(EKS 자체 러너 아님).
+# 근거: docs/AquaSentinel_GitLab_CI_도입_근거_팀공유용_2026-10-08.md "약점과 대응" —
+# Terraform이 그 EKS 클러스터 자체를 destroy/수정하는데 실행 환경이 그 클러스터
+# 안에 있으면 apply가 클러스터를 망가뜨리는 순간 CI도 같이 사라지는 순환 의존이
+# 생긴다. terraform/modules/aws-cicd가 발급하는 IAM Role(GitLab.com 직접 OIDC)을
+# 그대로 쓴다.
+#
+# 경로 구조 개편(2026-10-10)에 맞춰 feat/gitlab-ci-terraform-pipeline-20261009의
+# 원본을 새 레이아웃(global/, {seoul,tokyo}/persistent/, {seoul,tokyo}/rebuild/
+# {1-network..4-edge}/)에 맞게 다시 썼다 — 모듈 목록도 11→8로 줄어든 걸 반영
+# (aws-access/aws-ingress/aws-api-raw-store/aws-observability-storage/aws-eso는
+# aws-irsa+aws-storage로 흡수되거나 구조 밖으로 빠짐).
+#
+# 범위에서 제외되는 것(둘 다 "CI가 쓸 것 자체를 만드는" 닭과 달걀 컴포넌트,
+# 최초 1회 수동 적용):
+#   - terraform/global/bootstrap/  (tfstate 백엔드 S3 버킷 자체)
+#   - terraform/global/cicd/       (이 파이프라인이 쓰는 IAM Role 자체)
+#
+# 도쿄는 D4(상시 운영) 이후로 둘로 나뉜다:
+#   - tokyo/persistent/   서울과 동일하게 자동 plan + 수동 승인 apply(상시 관리 대상)
+#   - tokyo/rebuild/*     자동 트리거 없음, 전부 when: manual — 재해 상황에만 사람이
+#                         직접 버튼을 눌러 실행한다(DR 전제와 상충하는 자동
+#                         destroy/apply 방지)
+#
+# 적용 순서(수동 승인 시 반드시 지킬 것, 파이프라인이 강제하지는 않음):
+#   persistent → rebuild/1-network → rebuild/2-cluster → rebuild/3-gitops → rebuild/4-edge
+# 2-cluster가 persistent의 remote_state를 읽고, 3-gitops/4-edge가 2-cluster의
+# remote_state를 읽는 구조라 역순 apply는 "no state file" 에러로 바로 드러난다.
+
+stages:
+  - validate
+  - plan
+  - apply
+
+variables:
+  TF_VERSION: "1.10"
+
+default:
+  # hashicorp/terraform 이미지는 ENTRYPOINT가 ["terraform"]으로 고정돼 있어
+  # entrypoint를 비워주지 않으면 Runner가 넣는 셸 스크립트 실행 자체가 깨진다
+  # (GitLab 공식 Terraform 연동 가이드에 명시된 알려진 함정).
+  image:
+    name: hashicorp/terraform:${TF_VERSION}
+    entrypoint: [""]
+
+# ---------------------------------------------------------------------------
+# 항상 실행되는 게이트 잡 — paths 필터(rules:changes) 때문에 아무 잡도 안 돌면
+# "필수 상태 검사"가 영원히 대기 상태로 남는 함정(연구 메모 참고)을 막는다.
+# GitLab 프로젝트 설정에서 "Pipelines must succeed"의 기준으로 이 잡을 쓴다.
+# ---------------------------------------------------------------------------
+ci-gate:
+  stage: validate
+  image: alpine:3.20
+  script:
+    - echo "pipeline ran"
+  rules:
+    - when: always
+
+# ---------------------------------------------------------------------------
+# GitLab ID 토큰 → AWS OIDC. 토큰의 aud를 "https://aws"로 커스터마이징하고
+# (terraform/modules/aws-cicd가 그 aud로 OIDC Provider를 만들어둠), 표준
+# AWS_ROLE_ARN/AWS_WEB_IDENTITY_TOKEN_FILE 환경변수로 넘기면 AWS Provider가
+# 별도 설정 없이 자동으로 picks up한다(EKS IRSA와 같은 메커니즘, 토큰 출처만 다름).
+# TF_PLAN_ROLE_ARN/TF_APPLY_ROLE_ARN은 GitLab CI/CD 변수(Protected+Masked)로
+# 등록 — 값은 global/cicd를 수동 적용한 뒤 나온 output.
+# ---------------------------------------------------------------------------
+.aws_oidc_plan:
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: https://aws
+  before_script:
+    - export AWS_ROLE_ARN="${TF_PLAN_ROLE_ARN}"
+    - export AWS_WEB_IDENTITY_TOKEN_FILE="$(pwd)/.aws_web_identity_token"
+    - echo "${AWS_ID_TOKEN}" > "${AWS_WEB_IDENTITY_TOKEN_FILE}"
+
+.aws_oidc_apply:
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: https://aws
+  before_script:
+    - export AWS_ROLE_ARN="${TF_APPLY_ROLE_ARN}"
+    - export AWS_WEB_IDENTITY_TOKEN_FILE="$(pwd)/.aws_web_identity_token"
+    - echo "${AWS_ID_TOKEN}" > "${AWS_WEB_IDENTITY_TOKEN_FILE}"
+
+# ---------------------------------------------------------------------------
+# 모듈 검증 — AWS 자격증명 불필요(backend=false). 어떤 컴포넌트가 쓰든 모듈이
+# 깨지면 전체에 영향이 가므로, 모듈 자체가 바뀌면 항상 돈다. 8개(경로 구조
+# 개편으로 11개에서 축소 — aws-irsa/aws-storage가 공통화를 흡수).
+# ---------------------------------------------------------------------------
+.module_validate:
+  stage: validate
+  script:
+    - cd terraform/modules/${MODULE}
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+
+validate:modules:
+  extends: .module_validate
+  parallel:
+    matrix:
+      - MODULE: [aws-network, aws-eks, aws-data, aws-dns, aws-storage, aws-irsa, aws-cicd, aws-registry]
+  rules:
+    - changes:
+        - terraform/modules/${MODULE}/**/*
+
+# ---------------------------------------------------------------------------
+# 서울 컴포넌트(persistent + rebuild/1~4) — validate(자격증명 불필요) →
+# plan(MR, 읽기전용) → apply(main push, 수동 승인 게이트 + 쓰기 권한). 모듈이
+# 바뀌어도 모든 컴포넌트가 영향받을 수 있으니 같이 트리거한다. 도쿄의 persistent도
+# "상시 운영"(D4)이라 서울과 동일한 자동 plan/수동 apply 취급 — 별도 매크로로 뺌.
+# ---------------------------------------------------------------------------
+.seoul_matrix: &seoul_matrix
+  - COMPONENT_PATH: [persistent, rebuild/1-network, rebuild/2-cluster, rebuild/3-gitops, rebuild/4-edge]
+
+.seoul_changes: &seoul_changes
+  - terraform/seoul/${COMPONENT_PATH}/**/*
+  - terraform/modules/**/*
+
+validate:seoul:
+  stage: validate
+  script:
+    - cd terraform/seoul/${COMPONENT_PATH}
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+  parallel:
+    matrix: *seoul_matrix
+  rules:
+    - changes: *seoul_changes
+
+plan:seoul:
+  extends: .aws_oidc_plan
+  stage: plan
+  script:
+    - cd terraform/seoul/${COMPONENT_PATH}
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  parallel:
+    matrix: *seoul_matrix
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *seoul_changes
+
+apply:seoul:
+  extends: .aws_oidc_apply
+  stage: apply
+  script:
+    - cd terraform/seoul/${COMPONENT_PATH}
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform apply -input=false -auto-approve
+  parallel:
+    matrix: *seoul_matrix
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      changes: *seoul_changes
+      when: manual
+  allow_failure: false
+
+# ---------------------------------------------------------------------------
+# 도쿄 persistent — 상시 운영(D4)이라 서울과 동일하게 자동 plan + 수동 승인
+# apply. rebuild/*와 분리한 이유는 바로 아래 tokyo-dr 매크로 설명 참고.
+# ---------------------------------------------------------------------------
+.tokyo_persistent_matrix: &tokyo_persistent_matrix
+  - COMPONENT_PATH: [persistent]
+
+.tokyo_persistent_changes: &tokyo_persistent_changes
+  - terraform/tokyo/${COMPONENT_PATH}/**/*
+  - terraform/modules/**/*
+
+validate:tokyo-persistent:
+  stage: validate
+  script:
+    - cd terraform/tokyo/${COMPONENT_PATH}
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+  parallel:
+    matrix: *tokyo_persistent_matrix
+  rules:
+    - changes: *tokyo_persistent_changes
+
+plan:tokyo-persistent:
+  extends: .aws_oidc_plan
+  stage: plan
+  script:
+    - cd terraform/tokyo/${COMPONENT_PATH}
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  parallel:
+    matrix: *tokyo_persistent_matrix
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *tokyo_persistent_changes
+
+apply:tokyo-persistent:
+  extends: .aws_oidc_apply
+  stage: apply
+  script:
+    - cd terraform/tokyo/${COMPONENT_PATH}
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform apply -input=false -auto-approve
+  parallel:
+    matrix: *tokyo_persistent_matrix
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      changes: *tokyo_persistent_changes
+      when: manual
+  allow_failure: false
+
+# ---------------------------------------------------------------------------
+# 도쿄 DR(rebuild/1~4) — 자동 트리거 전혀 없음(changes 조건 자체가 없음). 모든
+# 잡이 항상 when: manual로만 파이프라인에 노출되고, 트리거하지 않으면
+# 파이프라인을 막지 않도록 allow_failure: true.
+# ---------------------------------------------------------------------------
+.tokyo_dr_matrix: &tokyo_dr_matrix
+  - COMPONENT_PATH: [rebuild/1-network, rebuild/2-cluster, rebuild/3-gitops, rebuild/4-edge]
+
+plan:tokyo-dr:
+  extends: .aws_oidc_plan
+  stage: plan
+  script:
+    - cd terraform/tokyo/${COMPONENT_PATH}
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  parallel:
+    matrix: *tokyo_dr_matrix
+  rules:
+    - when: manual
+  allow_failure: true
+
+apply:tokyo-dr:
+  extends: .aws_oidc_apply
+  stage: apply
+  script:
+    - cd terraform/tokyo/${COMPONENT_PATH}
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform apply -input=false -auto-approve
+  parallel:
+    matrix: *tokyo_dr_matrix
+  rules:
+    - when: manual
+  allow_failure: true
