@@ -8,15 +8,41 @@ data "aws_secretsmanager_secret_version" "gitops_pat" {
   secret_id = local.gitops_pat_secret_name
 }
 
+# api-module 네임스페이스는 patched_app "api-module-db-secret"이
+# CreateNamespace=true로 만드는데, 그건 ArgoCD Application 리소스를 만든다는
+# 뜻일 뿐 ArgoCD가 실제로 그걸 동기화해 네임스페이스가 생기는 건 비동기다.
+# Terraform은 Application CR 생성이 끝나자마자 바로 다음 리소스로 넘어가므로
+# depends_on만으로는 "네임스페이스가 실제로 존재함"을 보장 못 한다(2026-10-10,
+# 3-gitops 첫 실제 적용에서 "namespaces api-module not found"로 발견 —
+# helm_release.argocd의 CRD 부트스트랩 역설과 같은 계열의 문제). ArgoCD가
+# 동기화를 끝낼 때까지 폴링해서 기다린다(아래 restart_lbc_for_gateway_api와
+# 동일한 kubectl 인증 패턴).
+resource "null_resource" "wait_for_api_module_namespace" {
+  depends_on = [kubernetes_manifest.patched_app["api-module-db-secret"]]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      CA_FILE=$(mktemp)
+      echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
+      for i in $(seq 1 60); do
+        kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get namespace api-module >/dev/null 2>&1 && break
+        sleep 5
+      done
+      kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get namespace api-module
+      rm -f "$CA_FILE"
+    EOT
+  }
+}
+
 # api-module의 collector·processor ServiceAccount — loki/eso와 같은 이유로
-# Terraform이 미리 만들어 IRSA role-arn을 심어둔다. api-module 네임스페이스
-# 자체는 patched_app "api-module-db-secret"이 CreateNamespace=true로 먼저
-# 만들므로 여기서 kubernetes_namespace_v1은 만들지 않는다(이중 소유 충돌 방지).
-# 이름은 2-cluster의 기본값(collector_service_account_name="collector",
+# Terraform이 미리 만들어 IRSA role-arn을 심어둔다. 이름은 2-cluster의
+# 기본값(collector_service_account_name="collector",
 # processor_service_account_name="processor")과 반드시 일치해야 IRSA
 # 신뢰조건(sub)이 맞는다 — reprocess Job과 completeness-check Deployment도
 # processor 이미지를 쓰므로 이 processor SA를 그대로 공유한다.
 resource "kubernetes_service_account_v1" "api_module_collector" {
+  depends_on = [null_resource.wait_for_api_module_namespace]
+
   metadata {
     name      = "collector"
     namespace = "api-module"
@@ -27,6 +53,8 @@ resource "kubernetes_service_account_v1" "api_module_collector" {
 }
 
 resource "kubernetes_service_account_v1" "api_module_processor" {
+  depends_on = [null_resource.wait_for_api_module_namespace]
+
   metadata {
     name      = "processor"
     namespace = "api-module"
