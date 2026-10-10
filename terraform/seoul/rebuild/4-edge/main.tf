@@ -64,7 +64,10 @@ module "dns" {
   create_certificate = false
 
   # Route53 헬스체크 + Failover 레코드 — 서울=PRIMARY. apex(대시보드) +
-  # auth(Keycloak, 인증 B안) 둘 다 같은 ALB로 failover.
+  # auth(Keycloak, 인증 B안) 둘 다 같은 ALB로 failover. 도쿄
+  # tokyo/rebuild/4-edge(SECONDARY)가 아직 적용 안 된 상태에서 이 헬스체크가
+  # 실패하면 failover할 대상 자체가 없어 그냥 장애로 끝난다 — 이 레코드
+  # 하나만으로는 DR이 완성되지 않는다.
   enable_failover_routing = true
   failover_hostnames      = ["", "auth"]
   failover_role           = "PRIMARY"
