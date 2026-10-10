@@ -1,3 +1,7 @@
+# VPC/서브넷/NAT — 컴퓨트 전제 레이어 중 첫 단계. eks_cluster_name을 네트워크
+# 모듈까지 내려보내는 이유는 서브넷에 kubernetes.io/cluster/<name>=shared
+# 태그를 미리 심어둬야 2-cluster가 아직 없는 시점에도 LBC/오토스케일러가
+# 쓸 서브넷 디스커버리가 가능하기 때문(순서상 2-cluster보다 먼저 떠야 함).
 terraform {
   required_version = ">= 1.10"
 
