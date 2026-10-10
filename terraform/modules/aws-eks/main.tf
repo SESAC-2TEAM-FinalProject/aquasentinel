@@ -268,3 +268,29 @@ resource "aws_eks_addon" "ebs_csi" {
   resolve_conflicts_on_update = "OVERWRITE"
   depends_on                  = [aws_eks_node_group.default]
 }
+
+# ---------------------------------------------------------------------------
+# 팀원 접근권한 (EKS Access Entries) — 구 aws-access 모듈/컴포넌트 흡수
+# (2026-10-09 구조 개선: 독립 컴포넌트로 분리할 이유가 약해 EKS에 통합.
+#  클러스터가 존재해야만 의미 있는 리소스라 별도 state로 쪼갤 가치가 없었음)
+# ---------------------------------------------------------------------------
+
+resource "aws_eks_access_entry" "team" {
+  for_each = { for m in var.team_members : m.name => m }
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.iam_arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "team" {
+  for_each = aws_eks_access_entry.team
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.principal_arn
+  policy_arn    = var.access_policy_arn
+
+  access_scope {
+    type = "cluster"
+  }
+}

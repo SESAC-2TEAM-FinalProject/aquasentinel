@@ -1,2 +1,0 @@
-# 사용법: terraform.tfvars로 복사 후 실제 저장소 경로로 채우기
-github_repository = "your-org/aquasentinel"

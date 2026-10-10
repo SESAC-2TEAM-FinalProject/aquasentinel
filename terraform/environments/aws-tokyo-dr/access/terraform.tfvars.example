@@ -1,8 +1,0 @@
-# 사용법: terraform.tfvars로 복사 후 값 채우기
-tfstate_bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
-
-team_members = [
-  { name = "A", iam_arn = "arn:aws:iam::<ACCOUNT_ID>:user/team-a" },
-  { name = "B", iam_arn = "arn:aws:iam::<ACCOUNT_ID>:user/team-b" },
-  { name = "C", iam_arn = "arn:aws:iam::<ACCOUNT_ID>:user/team-c" },
-]

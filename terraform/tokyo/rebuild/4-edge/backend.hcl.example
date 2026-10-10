@@ -1,0 +1,3 @@
+bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
+key    = "tokyo/rebuild/4-edge/terraform.tfstate"
+region = "ap-northeast-2"
