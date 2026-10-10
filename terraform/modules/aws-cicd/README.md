@@ -37,7 +37,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_gitlab_project_path"></a> [gitlab\_project\_path](#input\_gitlab\_project\_path) | GitLab 프로젝트 경로(그룹/프로젝트), 예: SESAC-2TEAM-FinalProject/aquasentinel. OIDC sub 클레임의 project\_path 부분과 정확히 일치해야 한다. | `string` | n/a | yes |
+| <a name="input_gitlab_project_id"></a> [gitlab\_project\_id](#input\_gitlab\_project\_id) | GitLab 프로젝트의 숫자 ID(프로젝트 개요 화면 'Project ID'). 2026-10-10, project\_path 기반 sub 클레임에서 전환 — GitLab이 '이 경로를 과거 다른 프로젝트가 쓴 적 있음'을 이유로 ID 토큰 발급 자체를 막는 재사용 방지 보안 기능에 걸려서, path보다 불변인 project\_id로 옮겼다(GitLab 프로젝트의 ci\_id\_token\_sub\_claim\_components를 ["project\_id","ref\_type","ref"]로 맞춰야 함). | `string` | n/a | yes |
 | <a name="input_project_name"></a> [project\_name](#input\_project\_name) | n/a | `string` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | n/a | `map(string)` | `{}` | no |
 

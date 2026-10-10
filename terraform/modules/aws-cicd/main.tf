@@ -34,8 +34,9 @@ resource "aws_iam_openid_connect_provider" "gitlab" {
 }
 
 # plan 역할 — 프로젝트 내 모든 브랜치/MR 파이프라인에서 assume 가능(읽기전용이라
-# PR에서 리소스가 생성될 위험이 없음). sub 클레임 형식은 GitLab 공식 문서 기준:
-# project_path:<group>/<project>:ref_type:branch:ref:<branch>
+# PR에서 리소스가 생성될 위험이 없음). sub 클레임은 project_id 기반(위 변수 설명
+# 참고 — project_path 재사용 방지 보안 기능 때문에 2026-10-10 전환):
+# project_id:<numeric_id>:ref_type:branch:ref:<branch>
 data "aws_iam_policy_document" "plan_assume_role" {
   statement {
     effect  = "Allow"
@@ -55,7 +56,7 @@ data "aws_iam_policy_document" "plan_assume_role" {
     condition {
       test     = "StringLike"
       variable = "gitlab.com:sub"
-      values   = ["project_path:${var.gitlab_project_path}:*"]
+      values   = ["project_id:${var.gitlab_project_id}:*"]
     }
   }
 }
@@ -97,7 +98,7 @@ data "aws_iam_policy_document" "apply_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "gitlab.com:sub"
-      values   = ["project_path:${var.gitlab_project_path}:ref_type:branch:ref:main"]
+      values   = ["project_id:${var.gitlab_project_id}:ref_type:branch:ref:main"]
     }
   }
 }
