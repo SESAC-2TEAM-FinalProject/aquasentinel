@@ -7,3 +7,8 @@ output "apply_role_arn" {
   description = "main 브랜치 push 파이프라인(apply 전용, 쓰기 권한)에서 GitLab OIDC로 assume하는 IAM Role ARN. .gitlab-ci.yml에서 AWS_ROLE_ARN으로 그대로 사용."
   value       = aws_iam_role.apply.arn
 }
+
+output "build_role_arns" {
+  description = "이미지 빌드·ECR 푸시 역할 ARN — 키는 build_projects의 키(예: web)."
+  value       = { for k, r in aws_iam_role.build : k => r.arn }
+}

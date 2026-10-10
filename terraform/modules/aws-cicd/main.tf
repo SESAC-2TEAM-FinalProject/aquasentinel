@@ -200,3 +200,92 @@ resource "aws_iam_role_policy_attachment" "apply_iam_scoped" {
   role       = aws_iam_role.apply.name
   policy_arn = aws_iam_policy.apply_iam_scoped.arn
 }
+
+# ---------------------------------------------------------------------------
+# 이미지 빌드 CI용 ECR 푸시 역할 — 이 cicd 컴포넌트와 다른 GitLab 프로젝트
+# (앱 레포 미러)가 assume한다. 신뢰 당사자가 "GitLab.com 자체"인 OIDC라 위
+# plan/apply와 같은 Provider를 project_id 조건만 바꿔 재사용한다(2026-10-11,
+# 웹 레포 CI 자동화 — PM 전달 "웹 이미지 빌드·ECR 푸시까지 CI가 할지" 결정).
+# apply 역할과 같은 이유로 main 브랜치 파이프라인만 assume 가능 — 미러
+# 프로젝트는 pull sync가 main을 갱신할 때 생기는 push 이벤트로 파이프라인이
+# 돈다.
+# ---------------------------------------------------------------------------
+
+data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "build_assume_role" {
+  for_each = var.build_projects
+
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.gitlab.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "gitlab.com:aud"
+      values   = ["https://aws"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "gitlab.com:sub"
+      values   = ["project_id:${each.value.gitlab_project_id}:ref_type:branch:ref:main"]
+    }
+  }
+}
+
+resource "aws_iam_role" "build" {
+  for_each = var.build_projects
+
+  name               = "${local.name_prefix}-gitlab-${each.key}-ecr-push"
+  assume_role_policy = data.aws_iam_policy_document.build_assume_role[each.key].json
+  tags               = var.tags
+}
+
+# ecr:GetAuthorizationToken은 리소스 수준 권한을 지원하지 않아 "*"가 불가피하다
+# (docker login 한 번에 전체 레지스트리 인증 토큰을 받는 AWS 쪽 제약 — ECR
+# API 전체의 공통 제약이지 이 역할만의 완화는 아니다). 실제 쓰기 권한
+# (PutImage 등)은 그 프로젝트의 리포지토리로만 좁힌다.
+data "aws_iam_policy_document" "build_ecr_push" {
+  for_each = var.build_projects
+
+  statement {
+    sid       = "EcrAuth"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcrPush"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchGetImage",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+    ]
+    resources = [
+      for repo in each.value.ecr_repositories :
+      "arn:aws:ecr:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:repository/${repo}"
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "build_ecr_push" {
+  for_each = var.build_projects
+
+  name   = "${local.name_prefix}-gitlab-${each.key}-ecr-push"
+  role   = aws_iam_role.build[each.key].id
+  policy = data.aws_iam_policy_document.build_ecr_push[each.key].json
+}
