@@ -1,4 +1,0 @@
-# 사용법: terraform init -backend-config=backend.hcl
-bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
-key    = "dev/ap-northeast-2/dns/terraform.tfstate"
-region = "ap-northeast-2"

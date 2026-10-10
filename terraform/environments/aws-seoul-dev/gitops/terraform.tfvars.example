@@ -1,2 +1,0 @@
-# 사용법: terraform.tfvars로 복사 후 값 채우기
-tfstate_bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
