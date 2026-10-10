@@ -14,7 +14,7 @@ variable "region" {
   default     = "ap-northeast-2"
 }
 
-variable "gitlab_project_path" {
-  description = "GitLab 프로젝트 경로(그룹/프로젝트), 예: SESAC-2TEAM-FinalProject/aquasentinel. OIDC sub 클레임의 project_path 부분과 정확히 일치해야 한다."
+variable "gitlab_project_id" {
+  description = "GitLab 프로젝트의 숫자 ID(프로젝트 개요 화면 'Project ID'). project_path 재사용 방지 보안 기능 때문에 2026-10-10 전환 — modules/aws-cicd/variables.tf 주석 참고."
   type        = string
 }
