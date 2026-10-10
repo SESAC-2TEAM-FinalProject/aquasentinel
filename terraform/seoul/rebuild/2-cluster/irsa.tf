@@ -290,3 +290,55 @@ module "processor_irsa" {
   policy_arns                = { processor = aws_iam_policy.processor.arn }
   tags                       = var.tags
 }
+
+# ---------------------------------------------------------------------------
+# GitLab Runner(EKS 자체 러너, api-module/web/gitops 레포 CI용)의 ECR push/pull
+# — ESO/Loki와 같은 패턴(SA를 미리 만들고 Helm values는 create: false로 참조).
+# 도쿄는 CI가 돌지 않으므로 이 러너 자체가 필요 없다(서울 전용, 이 모듈
+# 호출도 seoul/rebuild/2-cluster에만 있음). Terraform 레포 CI(plan/apply)는
+# 이 러너가 아니라 GitLab.com 공유 러너를 쓴다(modules/aws-cicd 주석 참고 —
+# 클러스터를 destroy하는 작업이 그 클러스터 안 러너에서 돌면 순환 의존이
+# 생김) — 그래서 이 Role은 ECR 권한만 가진다.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "gitlab_runner_ecr" {
+  statement {
+    sid       = "EcrAuth"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcrPushPullScoped"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchGetImage",
+      "ecr:PutImage",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+    ]
+    # aws-registry 모듈의 레포 이름(${name_prefix}/*)과 동일한 접두사로 범위를
+    # 좁힌다.
+    resources = ["arn:aws:ecr:${var.region}:*:repository/${local.name_prefix}/*"]
+  }
+}
+
+resource "aws_iam_policy" "gitlab_runner_ecr" {
+  name   = "${local.name_prefix}-gitlab-runner-ecr"
+  policy = data.aws_iam_policy_document.gitlab_runner_ecr.json
+  tags   = var.tags
+}
+
+module "gitlab_runner_irsa" {
+  source = "../../../modules/aws-irsa"
+
+  role_name                  = "${local.name_prefix}-gitlab-runner-build"
+  oidc_provider_arn          = module.eks.oidc_provider_arn
+  namespace_service_accounts = ["gitlab-runner:gitlab-runner-build"]
+  policy_arns                = { ecr = aws_iam_policy.gitlab_runner_ecr.arn }
+  tags                       = var.tags
+}

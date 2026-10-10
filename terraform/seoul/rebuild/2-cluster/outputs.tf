@@ -57,3 +57,7 @@ output "collector_role_arn" {
 output "processor_role_arn" {
   value = module.processor_irsa.role_arn
 }
+
+output "gitlab_runner_build_role_arn" {
+  value = module.gitlab_runner_irsa.role_arn
+}
