@@ -164,6 +164,25 @@ data "aws_iam_policy_document" "apply_iam_scoped" {
     ]
     resources = ["arn:aws:iam::*:oidc-provider/*"]
   }
+
+  # EKS 노드그룹 생성 시 AWS가 AWSServiceRoleForAmazonEKSNodegroup(서비스
+  # 연결 역할)이 이미 있는지 GetRole로 확인한다 — 프로젝트 접두사로 좁힐 수
+  # 없는 AWS 관리형 리소스라 별도 예외 필요(2026-10-10, apply:seoul
+  # [rebuild/2-cluster] 첫 실제 실행에서 "missing permissions for
+  # 'iam:GetRole'"로 발견). 역할이 없을 경우를 대비해 CreateServiceLinkedRole도
+  # 같이 허용한다.
+  statement {
+    sid    = "EksServiceLinkedRoleManagement"
+    effect = "Allow"
+    actions = [
+      "iam:GetRole",
+      "iam:CreateServiceLinkedRole",
+    ]
+    resources = [
+      "arn:aws:iam::*:role/aws-service-role/eks.amazonaws.com/*",
+      "arn:aws:iam::*:role/aws-service-role/eks-nodegroup.amazonaws.com/*",
+    ]
+  }
 }
 
 resource "aws_iam_policy" "apply_iam_scoped" {
