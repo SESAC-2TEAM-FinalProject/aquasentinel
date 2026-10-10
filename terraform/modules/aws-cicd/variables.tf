@@ -11,3 +11,12 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "build_projects" {
+  description = "이미지 빌드·ECR 푸시 역할을 만들 GitLab 프로젝트 목록. 키는 역할 이름에 쓰는 짧은 식별자(예: web)."
+  type = map(object({
+    gitlab_project_id = string
+    ecr_repositories  = list(string) # 계정/리전 접두사 없는 리포지토리 이름만 (예: aquasentinel-dev/status-svc)
+  }))
+  default = {}
+}

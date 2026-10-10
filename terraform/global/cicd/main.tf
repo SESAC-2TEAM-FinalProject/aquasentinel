@@ -39,4 +39,11 @@ module "cicd" {
 
   project_name      = var.project_name
   gitlab_project_id = var.gitlab_project_id
+
+  build_projects = {
+    web = {
+      gitlab_project_id = var.web_gitlab_project_id
+      ecr_repositories  = ["aquasentinel-dev/status-svc", "aquasentinel-dev/web-frontend"]
+    }
+  }
 }
