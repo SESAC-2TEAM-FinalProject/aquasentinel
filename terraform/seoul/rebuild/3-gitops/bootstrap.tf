@@ -40,6 +40,12 @@ resource "kubernetes_service_account_v1" "api_module_processor" {
 # Terraform이 직접 설치하는 유일한 Helm 차트. 이후 모든 워크로드(ESO 포함)는
 # 이 Argo CD가 aquasentinel-gitops 레포를 보고 스스로 동기화한다.
 # ---------------------------------------------------------------------------
+# applications.tf의 kubernetes_manifest(argoproj.io/Application)가 이 차트가
+# 설치하는 CRD를 쓴다 — plan이 전체 그래프를 미리 스키마 검증하므로 같은 apply
+# 안에서는 depends_on만으로 "CRD가 아직 없음" 에러를 못 피한다. CI가
+# `terraform apply -target=helm_release.argocd`를 먼저 실행해 CRD부터
+# 등록시킨다(.gitlab-ci.yml의 apply:seoul 참고, 2026-10-10 첫 실제 적용에서
+# 발견).
 resource "helm_release" "argocd" {
   name             = "argocd"
   repository       = "https://argoproj.github.io/argo-helm"
