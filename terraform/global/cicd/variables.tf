@@ -23,3 +23,8 @@ variable "web_gitlab_project_id" {
   description = "aquasentinel-web GitLab(미러) 프로젝트의 숫자 ID — 이미지 빌드·ECR 푸시 역할의 신뢰 조건에 쓴다(2026-10-11, 웹 CI 자동화)."
   type        = string
 }
+
+variable "api_module_gitlab_project_id" {
+  description = "aquasentinel-api-module GitLab 프로젝트(GitHub→GitLab 전환, 미러 아닌 원본)의 숫자 ID — 이미지 빌드·ECR 푸시 역할의 신뢰 조건에 쓴다(2026-10-12)."
+  type        = string
+}
