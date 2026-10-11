@@ -45,5 +45,15 @@ module "cicd" {
       gitlab_project_id = var.web_gitlab_project_id
       ecr_repositories  = ["aquasentinel-dev/status-svc", "aquasentinel-dev/web-frontend"]
     }
+    api_module = {
+      gitlab_project_id = var.api_module_gitlab_project_id
+      ecr_repositories = [
+        "aquasentinel-dev/api-module/collector",
+        "aquasentinel-dev/api-module/processor",
+        "aquasentinel-dev/api-module/interpolation",
+        "aquasentinel-dev/api-module/grading",
+        "aquasentinel-dev/api-module/evaluation",
+      ]
+    }
   }
 }
