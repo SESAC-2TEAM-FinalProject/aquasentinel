@@ -55,7 +55,7 @@ locals {
   # aws-storage 등과 동일하게 "${name_prefix}-*" 네이밍을 따른다 —
   # 2-cluster의 ESO IAM 정책이 이 접두사로 접근 범위를 좁혀놓았다.
   gitops_pat_secret_name = "${local.name_prefix}-argocd-gitops-token"
-  gitops_repo_url        = "https://github.com/SESAC-2TEAM-FinalProject/aquasentinel-gitops.git"
+  gitops_repo_url        = "https://gitlab.com/sesac-2team-finalproject/aquasentinel-gitops.git" # GitHub→GitLab 전환(2026-10-11)
 }
 
 # 2-cluster가 EKS+전체 워크로드 IRSA를 갖고 있다(D2, 경로 구조 개편) —
