@@ -53,7 +53,7 @@ locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
   gitops_pat_secret_name = "${local.name_prefix}-argocd-gitops-token"
-  gitops_repo_url        = "https://github.com/SESAC-2TEAM-FinalProject/aquasentinel-gitops.git"
+  gitops_repo_url        = "https://gitlab.com/sesac-2team-finalproject/aquasentinel-gitops.git" # GitHub→GitLab 전환(2026-10-11)
 }
 
 data "terraform_remote_state" "cluster" {
