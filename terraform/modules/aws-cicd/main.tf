@@ -72,6 +72,29 @@ resource "aws_iam_role_policy_attachment" "plan_readonly" {
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
+# ReadOnlyAccess는 s3:PutObject/DeleteObject를 전부 막아서, Terraform 1.10
+# S3 네이티브 락(backend의 use_lockfile=true)이 만드는 `.tflock` 객체를
+# plan 역할이 생성·해제하지 못해 "Error acquiring the state lock"으로
+# plan 자체가 실패한다(2026-10-12 발견). state 본문이 아니라 락 파일에만
+# 쓰기를 허용해 읽기전용 의도는 그대로 유지한다.
+data "aws_iam_policy_document" "plan_state_lock" {
+  statement {
+    sid    = "StateLockFileOnly"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+    ]
+    resources = ["arn:aws:s3:::${var.tfstate_bucket_name}/*.tflock"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_state_lock" {
+  name   = "${local.name_prefix}-gitlab-plan-state-lock"
+  role   = aws_iam_role.plan.name
+  policy = data.aws_iam_policy_document.plan_state_lock.json
+}
+
 # apply 역할 — main 브랜치의 push 파이프라인(merge 후 실행)만 assume 가능.
 # ref_protected 클레임까지 같이 걸고 싶지만 StringLike/StringEquals 조건은
 # 리스트 내 OR로만 묶이고 AND는 별도 condition 블록으로 쌓아야 하므로,

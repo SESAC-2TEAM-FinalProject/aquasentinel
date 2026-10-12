@@ -37,8 +37,9 @@ provider "aws" {
 module "cicd" {
   source = "../../modules/aws-cicd"
 
-  project_name      = var.project_name
-  gitlab_project_id = var.gitlab_project_id
+  project_name        = var.project_name
+  gitlab_project_id   = var.gitlab_project_id
+  tfstate_bucket_name = var.tfstate_bucket_name
 
   build_projects = {
     web = {
