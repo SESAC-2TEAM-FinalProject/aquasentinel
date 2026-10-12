@@ -12,11 +12,11 @@ output "domain_name" {
 }
 
 output "health_check_id" {
-  description = "enable_health_check=false면 null."
-  value       = var.enable_health_check ? aws_route53_health_check.alb[0].id : null
+  description = "enable_health_check=false거나 ALB가 아직 없으면 null."
+  value       = one(aws_route53_health_check.alb[*].id)
 }
 
 output "alb_dns_name" {
-  description = "enable_failover_routing=false면 null."
-  value       = var.enable_failover_routing ? data.aws_lb.gateway[0].dns_name : null
+  description = "enable_failover_routing=false거나 ALB가 아직 없으면 null."
+  value       = one(data.aws_lb.gateway[*].dns_name)
 }
