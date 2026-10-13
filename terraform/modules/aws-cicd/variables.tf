@@ -25,3 +25,9 @@ variable "build_projects" {
   }))
   default = {}
 }
+
+variable "plan_readable_secret_names" {
+  description = "plan 역할이 값을 읽어야 하는 Secrets Manager 비밀 이름(정확한 이름, 모든 리전). ReadOnlyAccess 는 GetSecretValue 를 일부러 빼 두므로 따로 허용한다 — 2026-10-13, 3-gitops plan 이 data.aws_secretsmanager_secret_version.gitops_pat 에서 AccessDenied. 필요한 비밀만 좁게 넣는다."
+  type        = list(string)
+  default     = []
+}

@@ -41,6 +41,9 @@ module "cicd" {
   gitlab_project_id   = var.gitlab_project_id
   tfstate_bucket_name = var.tfstate_bucket_name
 
+  # 3-gitops plan 이 읽는 gitops 접근 토큰 — plan 역할에 이 비밀만 읽기 허용(서울 dev · 도쿄 dr-tokyo)
+  plan_readable_secret_names = ["aquasentinel-dev-argocd-gitops-token", "aquasentinel-dr-tokyo-argocd-gitops-token"]
+
   build_projects = {
     web = {
       gitlab_project_id = var.web_gitlab_project_id
