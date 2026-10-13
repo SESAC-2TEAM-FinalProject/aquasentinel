@@ -32,6 +32,16 @@
 # 2-cluster가 persistent의 remote_state를 읽고, 3-gitops/4-edge가 2-cluster의
 # remote_state를 읽는 구조라 역순 apply는 "no state file" 에러로 바로 드러난다.
 
+# 같은 커밋이 브랜치 파이프라인 · MR 파이프라인으로 두 번 도는 것을 막는다 —
+# MR 이 열린 브랜치는 MR 파이프라인만 돌린다(자체 러너 노드 디스크 · 동시 실행 수 절약).
+# main push 와 MR 이 없는 브랜치는 그대로 브랜치 파이프라인이 돈다.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
 stages:
   - validate
   - plan
