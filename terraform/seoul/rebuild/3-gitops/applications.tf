@@ -20,25 +20,26 @@
 locals {
   patched_apps = {
     "cloudnativepg-cluster" = {
-      path      = "manifests/cloudnativepg-cluster"
+      path      = "manifests/cloudnativepg/cluster"
+      prune     = false # 폴더 묶기 1차 적용 동안만 — 2차 적용에서 지운다
       namespace = "aquasentinel-db"
       patches   = []
     }
     "grafana-secret" = {
-      path      = "manifests/grafana-secret"
+      path      = "manifests/grafana/secret"
       namespace = "monitoring"
       patches   = []
     }
     "api-module-db-secret" = {
-      path      = "manifests/api-module-db-secret"
+      path      = "manifests/api-module/db-secret"
       namespace = "api-module"
       patches   = []
     }
     # ACM 인증서 ARN은 서울/도쿄 둘 다 예측 불가능한 값이라, 다른 항목들과
-    # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway-api/loadbalancer-config.yaml
+    # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway/instance/loadbalancer-config.yaml
     # 주석 참고).
     "gateway-api" = {
-      path      = "manifests/gateway-api"
+      path      = "manifests/gateway/instance"
       namespace = "ingress"
       patches = [
         {
@@ -58,7 +59,8 @@ locals {
     # 회신 문서 — 계속 Terraform이 주입). dns 모듈의 failover_hostnames에
     # "auth"가 이미 들어있어야 이 레코드가 실제로 뜬다(4-edge 컴포넌트).
     "keycloak" = {
-      path      = "manifests/keycloak"
+      path      = "manifests/keycloak/instance"
+      prune     = false # 폴더 묶기 1차 적용 동안만 — 2차 적용에서 지운다
       namespace = "keycloak"
       patches = [
         {
@@ -163,7 +165,10 @@ resource "kubernetes_manifest" "patched_app" {
 
       syncPolicy = {
         automated = {
-          prune    = true
+          # 경로 이동(manifests/ 폴더 묶기) 1차 적용 동안 DB · Keycloak 은 자동 삭제를 끈다 —
+          # 새 경로에서 파일이 하나라도 빠지면 prune 이 클러스터에서 지우기 때문.
+          # 확인 뒤 2차 적용에서 prune = false 항목을 지워 기본값(true)으로 되돌린다.
+          prune    = try(each.value.prune, true)
           selfHeal = true
         }
         syncOptions = [
