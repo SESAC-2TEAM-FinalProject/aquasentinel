@@ -294,3 +294,32 @@ resource "aws_eks_access_policy_association" "team" {
     type = "cluster"
   }
 }
+
+# ---------------------------------------------------------------------------
+# 읽기 전용 접근 — CI plan 역할처럼 클러스터를 읽기만 하는 주체(2026-10-13).
+# 3-gitops plan 이 kubernetes_manifest(Argo CD Application) · 시크릿을 읽는데
+# plan 역할이 access entry 에 없어 "Unauthorized" 로 실패했다(apply 역할은 클러스터
+# 생성자라 bootstrap_cluster_creator_admin_permissions 로 이미 관리자).
+# team_members(관리자)에 넣지 않는 이유: plan 은 어느 브랜치 MR 에서든 도는 잡이라
+# 쓰기 권한까지 주면 범위가 너무 넓다. AdminView 는 시크릿까지 읽고 쓰기는 없다.
+# ---------------------------------------------------------------------------
+
+resource "aws_eks_access_entry" "readonly" {
+  for_each = toset(var.readonly_principal_arns)
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "readonly" {
+  for_each = aws_eks_access_entry.readonly
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+}

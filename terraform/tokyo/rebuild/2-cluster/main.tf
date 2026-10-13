@@ -77,6 +77,12 @@ module "eks" {
 
   team_members      = var.team_members
   access_policy_arn = var.access_policy_arn
+
+  # CI Terraform plan 역할 — 3-gitops plan 이 클러스터를 읽을 수 있게(읽기 전용).
+  # 역할 자체는 global/cicd 가 만든다(이름 규칙: <project>-gitlab-terraform-plan — 환경 이름 없음, modules/aws-cicd 의 name_prefix = project_name).
+  readonly_principal_arns = [
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-gitlab-terraform-plan",
+  ]
 }
 
 module "data" {
@@ -92,3 +98,5 @@ module "data" {
   redis_node_type                  = var.redis_node_type
   redis_automatic_failover_enabled = var.redis_automatic_failover_enabled
 }
+
+data "aws_caller_identity" "current" {}
