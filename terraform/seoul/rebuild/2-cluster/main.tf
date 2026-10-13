@@ -57,12 +57,23 @@ data "terraform_remote_state" "persistent" {
 module "eks" {
   source = "../../../modules/aws-eks"
 
-  project_name       = var.project_name
-  environment        = var.environment
-  cluster_name       = var.cluster_name
-  cluster_version    = var.cluster_version
-  vpc_id             = data.terraform_remote_state.network.outputs.vpc_id
-  private_subnet_ids = data.terraform_remote_state.network.outputs.private_app_subnet_ids
+  project_name    = var.project_name
+  environment     = var.environment
+  cluster_name    = var.cluster_name
+  cluster_version = var.cluster_version
+  vpc_id          = data.terraform_remote_state.network.outputs.vpc_id
+  # EKS 컨트롤플레인은 클러스터 생성 이후 "새로운 AZ"를 추가할 수 없다 — 기존 AZ 안의
+  # 서브넷 추가만 허용된다(2026-10-13 실제 apply 시도에서 AWS가 400
+  # InvalidParameterException으로 명시 거부: "Provided subnets belong to the AZs
+  # 'ap-northeast-2a,ap-northeast-2b,ap-northeast-2c'. But they should belong to the
+  # exact set of AZs ... in which subnets were provided during cluster creation.").
+  # 그래서 컨트롤플레인용 subnet_ids는 생성 당시 AZ(2a, 2c)로 계속 고정한다. 컨트롤플레인
+  # 서브넷과 워커 노드 서브넷이 같은 AZ 집합일 필요는 없으므로(노드는 VPC 라우팅으로
+  # 컨트롤플레인과 통신), 2b는 카펜터 EC2NodeClass의 워커 전용 서브넷으로만 쓴다.
+  private_subnet_ids = slice(data.terraform_remote_state.network.outputs.private_app_subnet_ids, 0, 2)
+  # 기존 관리형 노드그룹도 동일하게 생성 당시 서브넷(2a, 2c)으로 고정 — subnet_ids가
+  # 바뀌면 노드그룹이 강제 교체(destroy+recreate)되기 때문(modules/aws-eks 주석 참고).
+  node_group_subnet_ids = slice(data.terraform_remote_state.network.outputs.private_app_subnet_ids, 0, 2)
 
   endpoint_public_access  = var.endpoint_public_access
   endpoint_private_access = var.endpoint_private_access

@@ -61,3 +61,19 @@ output "processor_role_arn" {
 output "gitlab_runner_build_role_arn" {
   value = module.gitlab_runner_irsa.role_arn
 }
+
+output "karpenter_controller_role_arn" {
+  value = module.karpenter_irsa.role_arn
+}
+
+output "karpenter_node_instance_profile_name" {
+  value = module.eks.node_instance_profile_name
+}
+
+output "karpenter_node_role_name" {
+  value = module.eks.node_role_name
+}
+
+output "karpenter_interruption_queue_name" {
+  value = aws_sqs_queue.karpenter_interruption.name
+}

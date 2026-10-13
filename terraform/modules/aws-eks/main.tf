@@ -110,6 +110,27 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
+# SSM — 카펜터 공식 KarpenterNodeRole에도 포함되는 정책(AMI 리졸브와는 무관하고
+# 노드에 대한 세션 매니저 접속용). 2026-10-13 보안 하드닝 검토에서 노드 역할에
+# 빠져있는 걸 확인했고, 보안 강화안(EKS 퍼블릭 엔드포인트 CIDR 제한 시 SSM
+# 포트포워딩 브릿지)에도 재사용할 수 있어 여기서 같이 추가한다.
+resource "aws_iam_role_policy_attachment" "node_ssm" {
+  role       = aws_iam_role.node.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# 카펜터가 프로비저닝하는 노드용 인스턴스 프로필. 관리형 노드그룹(아래
+# aws_eks_node_group.default)은 EKS가 인스턴스 프로필을 내부적으로 자동
+# 생성해주지만, 카펜터의 EC2NodeClass는 명시적인 인스턴스 프로필을 받아야
+# 해서 기존 노드 역할(aws_iam_role.node)을 그대로 재사용해 하나 만들어둔다
+# (새 역할을 따로 안 만드는 이유: 카펜터가 띄우는 노드도 결국 기존 관리형
+# 노드그룹의 노드와 동일한 워크로드를 수용하므로 권한을 분리할 이유가 없음).
+resource "aws_iam_instance_profile" "node" {
+  name = "${local.name_prefix}-eks-node-profile"
+  role = aws_iam_role.node.name
+  tags = var.tags
+}
+
 # ---------------------------------------------------------------------------
 # 노드그룹 — 커스텀 launch template으로 max-pods를 EKS 관리형 부트스트랩에 병합한다.
 # AMI를 직접 지정하지 않으므로 EKS가 관리형 AMI(기본값 AL2023_x86_64_STANDARD)를
@@ -159,7 +180,13 @@ resource "aws_eks_node_group" "default" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${local.name_prefix}-default"
   node_role_arn   = aws_iam_role.node.arn
-  subnet_ids      = var.private_subnet_ids
+  # 클러스터 vpc_config(위)와 달리 일부러 var.private_subnet_ids를 그대로 안 쓴다 —
+  # 관리형 노드그룹은 subnet_ids가 바뀌면 AWS API 특성상 무조건 강제 교체(destroy+recreate)
+  # 된다(2026-10-13, 3번째 AZ 추가 시도 중 plan으로 직접 확인). 이미 CNPG/NATS가 떠 있는
+  # 노드그룹이라 조용히 날아가면 안 되므로, 서브넷 목록을 생성 당시 값으로 고정해서
+  # private_subnet_ids가 나중에 늘어나도(카펜터용 3번째 AZ 추가 등) 이 노드그룹은 전혀
+  # 영향받지 않게 분리했다. 카펜터 NodePool/EC2NodeClass가 3 AZ 전체를 담당한다.
+  subnet_ids = var.node_group_subnet_ids
 
   instance_types = var.node_instance_types
   capacity_type  = var.node_capacity_type
