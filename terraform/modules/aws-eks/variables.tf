@@ -97,3 +97,9 @@ variable "access_policy_arn" {
   type        = string
   default     = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 }
+
+variable "readonly_principal_arns" {
+  description = "클러스터를 읽기만 하는 IAM 주체(사람이 아닌 CI 역할 등). AmazonEKSAdminViewPolicy — 시크릿을 포함해 모든 리소스 읽기, 쓰기 없음. 예: Terraform plan 역할(3-gitops plan 이 Argo CD Application · 시크릿을 읽어야 한다)."
+  type        = list(string)
+  default     = []
+}

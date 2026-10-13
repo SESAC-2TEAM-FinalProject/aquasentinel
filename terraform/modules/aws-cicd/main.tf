@@ -89,6 +89,27 @@ data "aws_iam_policy_document" "plan_state_lock" {
   }
 }
 
+# plan 이 데이터 소스로 값을 읽어야 하는 비밀만 좁게 허용(이름 뒤 AWS 가 붙이는 6자리 접미사까지).
+# 3-gitops 의 gitops 접근 토큰처럼 plan 단계에서 읽는 것만 넣는다.
+data "aws_iam_policy_document" "plan_secret_read" {
+  count = length(var.plan_readable_secret_names) > 0 ? 1 : 0
+
+  statement {
+    sid       = "PlanReadSpecificSecrets"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [for n in var.plan_readable_secret_names : "arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${n}-*"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_secret_read" {
+  count = length(var.plan_readable_secret_names) > 0 ? 1 : 0
+
+  name   = "${local.name_prefix}-gitlab-plan-secret-read"
+  role   = aws_iam_role.plan.name
+  policy = data.aws_iam_policy_document.plan_secret_read[0].json
+}
+
 resource "aws_iam_role_policy" "plan_state_lock" {
   name   = "${local.name_prefix}-gitlab-plan-state-lock"
   role   = aws_iam_role.plan.name
