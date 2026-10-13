@@ -7,7 +7,7 @@
 locals {
   patched_apps = {
     "cloudnativepg-cluster" = {
-      path      = "manifests/cloudnativepg-cluster"
+      path      = "manifests/cloudnativepg/cluster"
       namespace = "aquasentinel-db"
       patches = [
         {
@@ -80,7 +80,7 @@ locals {
       ]
     }
     "grafana-secret" = {
-      path      = "manifests/grafana-secret"
+      path      = "manifests/grafana/secret"
       namespace = "monitoring"
       patches = [
         {
@@ -98,7 +98,7 @@ locals {
       ]
     }
     "api-module-db-secret" = {
-      path      = "manifests/api-module-db-secret"
+      path      = "manifests/api-module/db-secret"
       namespace = "api-module"
       patches = [
         {
@@ -124,10 +124,10 @@ locals {
       ]
     }
     # ACM 인증서 ARN은 서울/도쿄 둘 다 예측 불가능한 값이라, 다른 항목들과
-    # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway-api/loadbalancer-config.yaml
+    # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway/instance/loadbalancer-config.yaml
     # 주석 참고).
     "gateway-api" = {
-      path      = "manifests/gateway-api"
+      path      = "manifests/gateway/instance"
       namespace = "ingress"
       patches = [
         {
@@ -145,7 +145,7 @@ locals {
     # 실제 도메인은 cert ARN과 같은 이유로 패치(서울 쪽 주석 참고). DB 비밀번호
     # remoteRef.key도 도쿄 전용 Secrets Manager 이름으로 바꾼다.
     "keycloak" = {
-      path      = "manifests/keycloak"
+      path      = "manifests/keycloak/instance"
       namespace = "keycloak"
       patches = [
         {
