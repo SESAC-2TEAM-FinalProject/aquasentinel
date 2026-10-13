@@ -21,7 +21,6 @@ locals {
   patched_apps = {
     "cloudnativepg-cluster" = {
       path      = "manifests/cloudnativepg/cluster"
-      prune     = false # 폴더 묶기 1차 적용 동안만 — 2차 적용에서 지운다
       namespace = "aquasentinel-db"
       patches   = []
     }
@@ -60,7 +59,6 @@ locals {
     # "auth"가 이미 들어있어야 이 레코드가 실제로 뜬다(4-edge 컴포넌트).
     "keycloak" = {
       path      = "manifests/keycloak/instance"
-      prune     = false # 폴더 묶기 1차 적용 동안만 — 2차 적용에서 지운다
       namespace = "keycloak"
       patches = [
         {
@@ -165,10 +163,7 @@ resource "kubernetes_manifest" "patched_app" {
 
       syncPolicy = {
         automated = {
-          # 경로 이동(manifests/ 폴더 묶기) 1차 적용 동안 DB · Keycloak 은 자동 삭제를 끈다 —
-          # 새 경로에서 파일이 하나라도 빠지면 prune 이 클러스터에서 지우기 때문.
-          # 확인 뒤 2차 적용에서 prune = false 항목을 지워 기본값(true)으로 되돌린다.
-          prune    = try(each.value.prune, true)
+          prune    = true
           selfHeal = true
         }
         syncOptions = [
