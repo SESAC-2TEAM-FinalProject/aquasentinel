@@ -12,12 +12,22 @@ variable "region" {
 }
 
 variable "availability_zones" {
-  description = "이 리전에서 사용할 AZ 2개. 서울/도쿄 모두 AZ 이름이 달라 environment별로 넘겨받는다."
+  description = "이 리전에서 사용할 AZ 목록. 서울/도쿄 모두 AZ 이름이 달라 environment별로 넘겨받는다. 개수는 각 서브넷 CIDR 리스트 길이와 일치해야 한다(AZ당 서브넷 1개 전제, 계획서 11.7절)."
   type        = list(string)
 
   validation {
-    condition     = length(var.availability_zones) == 2
-    error_message = "AZ 2개 구성을 전제로 서브넷 CIDR을 나눴다 (계획서 11.7절)."
+    condition     = length(var.availability_zones) == length(var.public_subnet_cidrs)
+    error_message = "availability_zones와 public_subnet_cidrs의 개수가 일치해야 한다(AZ당 서브넷 1개)."
+  }
+
+  validation {
+    condition     = length(var.availability_zones) == length(var.private_app_subnet_cidrs)
+    error_message = "availability_zones와 private_app_subnet_cidrs의 개수가 일치해야 한다(AZ당 서브넷 1개)."
+  }
+
+  validation {
+    condition     = length(var.availability_zones) == length(var.private_data_subnet_cidrs)
+    error_message = "availability_zones와 private_data_subnet_cidrs의 개수가 일치해야 한다(AZ당 서브넷 1개)."
   }
 }
 
