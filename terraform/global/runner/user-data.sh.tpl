@@ -28,7 +28,10 @@ gitlab-runner register \
   --docker-image "alpine:3.20" \
   --docker-privileged=false
 
-# concurrent는 register가 안 건드리는 최상위 설정이라 별도로 주입한다.
-sed -i "1i concurrent = ${concurrent}" /etc/gitlab-runner/config.toml
+# concurrent는 register가 기본값(1)으로 이미 써두는 최상위 설정이라, 줄을
+# 추가하면 TOML 키 중복으로 설정 파싱 자체가 실패한다(2026-10-14 첫 부팅에서
+# 실제로 발생 — "Key 'concurrent' has already been defined"). 추가가 아니라
+# 치환해야 한다.
+sed -i "s/^concurrent = .*/concurrent = ${concurrent}/" /etc/gitlab-runner/config.toml
 
 systemctl enable --now gitlab-runner
