@@ -37,6 +37,12 @@ locals {
     # ACM 인증서 ARN은 서울/도쿄 둘 다 예측 불가능한 값이라, 다른 항목들과
     # 달리 양쪽 다 실제 패치를 채운다(manifests/gateway/instance/loadbalancer-config.yaml
     # 주석 참고).
+    # (2026-10-14) path가 "manifests/gateway-api"로 남아있던 드리프트 수정 —
+    # 2026-10-13 gitops 레포 폴더 재정리(커밋 689c0f1) 이후 라이브 Application은
+    # 이미 새 경로를 쓰고 있었는데 이 코드만 안 따라와서, 평범한 terraform apply
+    # 한 번이면 5개 Application 전부가 존재하지 않는 옛 경로로 되돌아가 prune으로
+    # 라이브 리소스가 삭제될 뻔했다(2-5단계 작업 중 plan으로 발견). 라이브
+    # source.path를 직접 조회해서 정확한 값으로 맞췄다.
     "gateway-api" = {
       path      = "manifests/gateway/instance"
       namespace = "ingress"
@@ -174,7 +180,13 @@ resource "kubernetes_manifest" "patched_app" {
     }
   }
 
-  depends_on = [helm_release.argocd]
+  # gitops_repo_creds(bootstrap.tf)에도 의존해야 한다 — 둘 다 helm_release.argocd에만
+  # 의존했을 때는 병렬/임의 순서로 생성될 수 있어, 시크릿보다 이 Application이 먼저
+  # 만들어지면 ArgoCD가 private 레포를 못 읽어 동기화가 지연된다. api-module-db-secret
+  # Application(네임스페이스 api-module 생성 담당)이 이 레이스에 걸리면
+  # wait_for_api_module_namespace(bootstrap.tf)의 5분 타임아웃을 넘긴다
+  # (2026-10-13 발견, 2026-10-14 수정).
+  depends_on = [helm_release.argocd, kubernetes_secret_v1.gitops_repo_creds]
 }
 
 # Loki는 원격 Helm 차트라(manifests/ 경로가 아님) 위 patched_app의 Kustomize
@@ -430,6 +442,102 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
   depends_on = [helm_release.argocd]
 }
 
+# 카펜터(Karpenter) — 가용성/DR 재구축 개선안(2026-10-13) 2단계. IAM 정책/
+# 인터럽션 큐/디스커버리 태그는 2-cluster/karpenter.tf가 이미 만들어뒀다
+# (10/13 적용 완료). 여기서는 컨트롤러 자체(Helm)와, 그 아래 NodePool/
+# EC2NodeClass(karpenter.tf, 이 디렉토리)를 설치한다.
+#
+# 공식 배포 채널이 OCI 레지스트리뿐이라(helm install도 oci://로 받음) 다른
+# Application들과 달리 repoURL이 차트 경로 자체다 — ArgoCD 2.5+는 repoURL이
+# OCI 아티팩트를 직접 가리키면 chart 필드 없이 자동으로 OCI 소스로 인식한다.
+#
+# settings.clusterEndpoint를 일부러 안 넣는다 — 2-cluster/karpenter.tf의
+# EKSIntegrationPolicy(eks:DescribeCluster)가 정확히 이 값을 런타임에
+# 스스로 알아내라고 만든 권한이다(수동 설정과 이중 관리 방지).
+locals {
+  karpenter_values = <<-EOT
+    settings:
+      clusterName: ${data.terraform_remote_state.cluster.outputs.cluster_name}
+      interruptionQueue: ${data.terraform_remote_state.cluster.outputs.karpenter_interruption_queue_name}
+
+    serviceAccount:
+      create: false
+      name: karpenter
+
+    replicas: 1
+
+    controller:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    # 스테이트풀 워크로드 복귀 작업(2026-10-14) — 컨트롤러는 "카펜터가 만든 노드엔
+    # 못 뜬다"는 nodeAffinity(karpenter.sh/nodepool DoesNotExist) 때문에 오직 이
+    # 관리형 노드그룹에만 뜰 수 있다. 그 노드그룹에 dedicated=stateful taint를 걸
+    # 예정이라(2-cluster/main.tf), 미리 toleration을 반영해두지 않으면 taint가
+    # 걸리는 순간 컨트롤러가 Pending에 빠져 카펜터 전체가 멈춘다. tolerations는
+    # 리스트라 차트 기본값(CriticalAddonsOnly)을 그대로 같이 적어야 덮어써지지
+    # 않는다(helm template으로 렌더링 확인 완료).
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - key: dedicated
+        operator: Equal
+        value: stateful
+        effect: NoSchedule
+  EOT
+}
+
+resource "kubernetes_manifest" "karpenter_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "karpenter"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      source = {
+        # OCI 소스는 다른 Application들과 필드 구성이 다르다 — repoURL엔 레지스트리까지만
+        # 넣고(oci:// 접두사 없이), 차트 이름은 chart 필드로 분리해야 한다. repoURL에
+        # 차트 경로까지 합쳐 넣었다가 "spec.source.repoURL and either spec.source.path
+        # or spec.source.chart are required" InvalidSpecError로 처음 실패했다
+        # (2026-10-14, ArgoCD 공식 Helm OCI 문서로 교차 확인 후 수정).
+        repoURL        = "public.ecr.aws/karpenter"
+        chart          = "karpenter"
+        targetRevision = "1.0.8" # EKS 1.31 지원 최소 버전(1.0.5) 이후의 패치 릴리스
+        helm = {
+          values = local.karpenter_values
+        }
+      }
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "kube-system"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd, kubernetes_service_account_v1.karpenter]
+}
+
 # LBC + Gateway API CRD 부트스트랩 경쟁 조건(2026-10-02 서울 재기동 때 재현
 # 확인) — LBC는 프로세스 시작 시 딱 한 번만 Gateway API CRD 존재 여부를
 # 확인하고 이후 재확인하지 않는다. Argo CD가 aws-load-balancer-controller와
@@ -448,12 +556,16 @@ resource "time_sleep" "wait_for_lbc_bootstrap" {
 resource "null_resource" "restart_lbc_for_gateway_api" {
   depends_on = [time_sleep.wait_for_lbc_bootstrap]
 
+  # (2026-10-14) 같은 레포의 다른 wait 스크립트들에서 발견된 마스킹 버그(마지막 줄이
+  # rm -f라 앞선 kubectl이 실패해도 항상 exit 0)를 여기도 같이 고친다.
   provisioner "local-exec" {
     command = <<-EOT
       CA_FILE=$(mktemp)
       echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
       kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} -n kube-system rollout restart deployment aws-load-balancer-controller
+      STATUS=$?
       rm -f "$CA_FILE"
+      exit $STATUS
     EOT
   }
 }

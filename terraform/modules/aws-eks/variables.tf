@@ -20,7 +20,12 @@ variable "vpc_id" {
 }
 
 variable "private_subnet_ids" {
-  description = "EKS 컨트롤플레인 ENI + 워커노드가 위치할 서브넷 (private-app, 2개 AZ)."
+  description = "EKS 컨트롤플레인 ENI가 위치할 서브넷. 컨트롤플레인은 subnet_ids 변경이 in-place라 AZ를 늘려도 안전하다."
+  type        = list(string)
+}
+
+variable "node_group_subnet_ids" {
+  description = "관리형 노드그룹(aws_eks_node_group.default) 전용 서브넷. subnet_ids 변경 시 노드그룹이 강제 교체되므로 private_subnet_ids와 분리했다 — 카펜터 도입(2026-10-13) 이후 이 노드그룹은 축소될 고정분이라 서브넷을 더 늘릴 계획이 없다."
   type        = list(string)
 }
 
@@ -59,6 +64,22 @@ variable "node_min_size" {
 variable "node_max_size" {
   type    = number
   default = 4
+}
+
+variable "node_labels" {
+  description = "관리형 노드그룹(aws_eks_node_group.default) 전체에 적용할 쿠버네티스 노드 라벨."
+  type        = map(string)
+  default     = {}
+}
+
+variable "node_taints" {
+  description = "관리형 노드그룹 전체에 적용할 taint 목록. effect는 AWS API 표기(NO_SCHEDULE/NO_EXECUTE/PREFER_NO_SCHEDULE)를 쓴다 — kubectl이 보여주는 NoSchedule 표기와 다르다."
+  type = list(object({
+    key    = string
+    value  = string
+    effect = string
+  }))
+  default = []
 }
 
 variable "enable_prefix_delegation" {

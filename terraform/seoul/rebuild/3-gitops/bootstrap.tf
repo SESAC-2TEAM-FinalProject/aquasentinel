@@ -20,6 +20,13 @@ data "aws_secretsmanager_secret_version" "gitops_pat" {
 resource "null_resource" "wait_for_api_module_namespace" {
   depends_on = [kubernetes_manifest.patched_app["api-module-db-secret"]]
 
+  # 마지막 줄이 과거엔 `rm -f "$CA_FILE"`라서, 앞의 60회 polling 루프가 전부
+  # 실패(타임아웃)해도 provisioner는 그 rm 성공 여부로 종료 코드를 매겨 항상
+  # exit 0(성공)으로 끝났다 — 네임스페이스가 실제로 없는데도 Terraform 로그엔
+  # "Creation complete"로 찍히고, 뒤이은 api_module_collector/processor
+  # ServiceAccount가 진짜 "namespace not found" 에러를 맞아야 비로소 문제가
+  # 드러났다(2026-10-13 발견, 2026-10-14 수정). 이제 kubectl 조회 결과를 변수에
+  # 담아 마지막에 명시적으로 성공/실패를 판정한다 — rm은 판정과 무관하게 먼저 실행.
   provisioner "local-exec" {
     command = <<-EOT
       CA_FILE=$(mktemp)
@@ -29,7 +36,12 @@ resource "null_resource" "wait_for_api_module_namespace" {
         sleep 5
       done
       kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get namespace api-module
+      STATUS=$?
       rm -f "$CA_FILE"
+      if [ "$STATUS" -ne 0 ]; then
+        echo "TIMEOUT: api-module namespace not found after 5m" >&2
+        exit 1
+      fi
     EOT
   }
 }
@@ -192,6 +204,24 @@ resource "kubernetes_service_account_v1" "gitlab_runner_build" {
     namespace = kubernetes_namespace_v1.gitlab_runner.metadata[0].name
     annotations = {
       "eks.amazonaws.com/role-arn" = data.terraform_remote_state.cluster.outputs.gitlab_runner_build_role_arn
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# 카펜터(Karpenter) 컨트롤러 ServiceAccount — 가용성/DR 재구축 개선안(2026-10-13)
+# 2단계. kube-system은 EKS가 기본 생성하는 네임스페이스라 gitlab-runner와 달리
+# kubernetes_namespace_v1이 필요 없다. 이름(karpenter)은 2-cluster/karpenter.tf의
+# module.karpenter_irsa.namespace_service_accounts = ["kube-system:karpenter"]와
+# 반드시 일치해야 IRSA 신뢰조건(sub)이 맞는다.
+# ---------------------------------------------------------------------------
+
+resource "kubernetes_service_account_v1" "karpenter" {
+  metadata {
+    name      = "karpenter"
+    namespace = "kube-system"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.cluster.outputs.karpenter_controller_role_arn
     }
   }
 }

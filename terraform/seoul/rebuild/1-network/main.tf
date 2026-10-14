@@ -36,10 +36,13 @@ provider "aws" {
 module "network" {
   source = "../../../modules/aws-network"
 
-  project_name       = var.project_name
-  environment        = var.environment
-  region             = var.region
-  availability_zones = var.availability_zones
-  single_nat_gateway = var.single_nat_gateway
-  eks_cluster_name   = var.eks_cluster_name
+  project_name              = var.project_name
+  environment               = var.environment
+  region                    = var.region
+  availability_zones        = var.availability_zones
+  public_subnet_cidrs       = var.public_subnet_cidrs
+  private_app_subnet_cidrs  = var.private_app_subnet_cidrs
+  private_data_subnet_cidrs = var.private_data_subnet_cidrs
+  single_nat_gateway        = var.single_nat_gateway
+  eks_cluster_name          = var.eks_cluster_name
 }

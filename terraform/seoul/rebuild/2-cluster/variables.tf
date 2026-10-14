@@ -55,24 +55,28 @@ variable "node_instance_types" {
   default = ["t3.large"]
 }
 
+# 2026-10-14 — 스테이트풀(CNPG·NATS) 복귀 작업. 팀결정요청 "결정 2" 확정(①
+# 온디맨드): 스팟 보호장치 3종 중 2개(do-not-disrupt, 인터럽션 큐)가 카펜터
+# 전용 기능이라 관리형 노드그룹으로 옮기면 적용이 안 됨 — 온디맨드로 바꿔서
+# 회수 리스크 자체를 없앤다.
 variable "node_capacity_type" {
   type    = string
-  default = "SPOT"
+  default = "ON_DEMAND"
 }
 
 variable "node_desired_size" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "node_min_size" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "node_max_size" {
   type    = number
-  default = 4
+  default = 3
 }
 
 variable "enable_prefix_delegation" {

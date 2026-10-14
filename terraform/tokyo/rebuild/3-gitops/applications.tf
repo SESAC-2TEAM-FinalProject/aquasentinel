@@ -263,7 +263,9 @@ resource "kubernetes_manifest" "patched_app" {
     }
   }
 
-  depends_on = [helm_release.argocd]
+  # gitops_repo_creds(bootstrap.tf)에도 의존해야 한다 — 서울과 동일 레이스 방지
+  # (2026-10-14, 서울 applications.tf 수정과 동일 이유).
+  depends_on = [helm_release.argocd, kubernetes_secret_v1.gitops_repo_creds]
 }
 
 # Loki — 원격 Helm 차트라 Kustomize 패치 대상이 없어, Application 전체를 여기서
@@ -509,12 +511,15 @@ resource "time_sleep" "wait_for_lbc_bootstrap" {
 resource "null_resource" "restart_lbc_for_gateway_api" {
   depends_on = [time_sleep.wait_for_lbc_bootstrap]
 
+  # (2026-10-14, 서울과 동일 수정) rm -f가 마지막 줄이면 kubectl 실패가 가려진다.
   provisioner "local-exec" {
     command = <<-EOT
       CA_FILE=$(mktemp)
       echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
       kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} -n kube-system rollout restart deployment aws-load-balancer-controller
+      STATUS=$?
       rm -f "$CA_FILE"
+      exit $STATUS
     EOT
   }
 }
