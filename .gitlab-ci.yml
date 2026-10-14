@@ -1,13 +1,16 @@
-# Terraform 레포 CI — 지금은 EKS 자체 러너(태그 eks-self-hosted)에서 실행한다(2026-10-13,
-# 공유 러너 대신 자체 러너로 전환 — 웹 · 모듈 CI 와 같은 러너).
-# 원래 설계는 GitLab.com 공유 러너(클러스터 밖)였다 — 근거:
-# docs/AquaSentinel_GitLab_CI_도입_근거_팀공유용_2026-10-08.md "약점과 대응".
-# Terraform 이 그 EKS 클러스터 자체를 destroy/수정하는데 실행 환경이 그 클러스터
-# 안에 있으면 apply 가 클러스터를 망가뜨리는 순간 CI 도 같이 사라지는 순환 의존이 생긴다.
-# 그래서 자체 러너로 돌리는 동안 지킬 것:
-#   - rebuild/1-network · rebuild/2-cluster 의 apply/destroy, 전체 재구축은
-#     러너가 그 클러스터 안에 있어 도중에 끊길 수 있다 → 로컬에서 실행한다
-#   - plan(읽기)과 3-gitops · 4-edge · persistent apply 는 자체 러너에서 돌려도 된다
+# Terraform 레포 CI — 자체 러너(태그 eks-self-hosted)에서 실행한다. 태그 이름은
+# "eks-self-hosted" 그대로지만 **2026-10-14(7단계)부터 러너는 EKS 클러스터 밖
+# 전용 EC2에 있다**(terraform/global/runner). 태그는 다른 레포 CI(api-module ·
+# web)도 같이 쓰고 있어 바꾸면 그쪽까지 고쳐야 해서 유지했다.
+#
+# 이전 배경: Terraform 이 그 EKS 클러스터 자체를 destroy/수정하는데 실행 환경이
+# 그 클러스터 안에 있으면 apply 가 클러스터를 망가뜨리는 순간 CI 도 같이 사라지는
+# 순환 의존이 생긴다(docs/AquaSentinel_GitLab러너_클러스터밖_이전_배경과계획 참고).
+#
+# **이전 전에는 이걸 운영 규칙으로만 막고 있었다** — "rebuild/1-network ·
+# rebuild/2-cluster 의 apply/destroy 와 전체 재구축은 로컬에서 실행한다". 러너가
+# 클러스터 밖으로 나오면서 이 규칙은 구조로 대체됐다(사람이 지켜야만 안전한 상태가
+# 아니게 됨). 다만 apply 는 여전히 전부 수동 승인이다.
 # 인증은 그대로 terraform/modules/aws-cicd 의 IAM Role(GitLab ID 토큰 OIDC) — 러너 위치와 무관.
 #
 # 경로 구조 개편(2026-10-10)에 맞춰 feat/gitlab-ci-terraform-pipeline-20261009의
@@ -283,3 +286,52 @@ apply:tokyo-dr:
   rules:
     - when: manual
   allow_failure: true
+
+# ---------------------------------------------------------------------------
+# global/runner — GitLab Runner EC2(7단계, 2026-10-14). global/bootstrap·
+# global/cicd와 달리 "CI가 쓸 것 자체를 만드는" 닭과 달걀 컴포넌트가 아니라
+# (최초 1회만 로컬/기존 러너로 적용하면 그 뒤부터는 이 컴포넌트가 만든 러너
+# 자신이 자기 변경분의 plan/apply를 처리할 수 있음), 다른 일반 컴포넌트와
+# 동일하게 validate 자동 + apply 수동으로 CI에 포함한다. 컴포넌트가 하나뿐이라
+# matrix 없이 경로를 직접 지정한다.
+# ---------------------------------------------------------------------------
+
+validate:global-runner:
+  stage: validate
+  script:
+    - cd terraform/global/runner
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+  rules:
+    - changes:
+        - terraform/global/runner/**/*
+        - terraform/modules/**/*
+
+plan:global-runner:
+  extends: .aws_oidc_plan
+  stage: plan
+  script:
+    - cd terraform/global/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - terraform/global/runner/**/*
+        - terraform/modules/**/*
+
+apply:global-runner:
+  extends: .aws_oidc_apply
+  stage: apply
+  script:
+    - cd terraform/global/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform apply -input=false -auto-approve
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      changes:
+        - terraform/global/runner/**/*
+        - terraform/modules/**/*
+      when: manual
+  allow_failure: false
