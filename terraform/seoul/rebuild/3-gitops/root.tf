@@ -37,6 +37,26 @@ resource "kubernetes_manifest" "root_app" {
                 { op = "replace", path = "/spec/sources/1/targetRevision", value = var.gitops_revision },
               ])
             },
+            # 원천 저장소 버킷 — 버킷 이름에 계정 ID 가 들어 있어 환경마다 다르다(gitops root-app.yaml 의 같은 패치를 옮겨 옴)
+            {
+              target = { kind = "Application", name = "api-module-config" }
+              patch = jsonencode([
+                {
+                  op   = "add"
+                  path = "/spec/source/kustomize"
+                  value = {
+                    patches = [
+                      {
+                        target = { kind = "ConfigMap", name = "api-module-infra-config" }
+                        patch = jsonencode([
+                          { op = "replace", path = "/data/RAW_STORE_DSN", value = "s3://${data.terraform_remote_state.persistent.outputs.bucket_names["api_raw_store"]}/" },
+                        ])
+                      },
+                    ]
+                  }
+                },
+              ])
+            },
           ]
         }
       }
