@@ -283,3 +283,52 @@ apply:tokyo-dr:
   rules:
     - when: manual
   allow_failure: true
+
+# ---------------------------------------------------------------------------
+# global/runner — GitLab Runner EC2(7단계, 2026-10-14). global/bootstrap·
+# global/cicd와 달리 "CI가 쓸 것 자체를 만드는" 닭과 달걀 컴포넌트가 아니라
+# (최초 1회만 로컬/기존 러너로 적용하면 그 뒤부터는 이 컴포넌트가 만든 러너
+# 자신이 자기 변경분의 plan/apply를 처리할 수 있음), 다른 일반 컴포넌트와
+# 동일하게 validate 자동 + apply 수동으로 CI에 포함한다. 컴포넌트가 하나뿐이라
+# matrix 없이 경로를 직접 지정한다.
+# ---------------------------------------------------------------------------
+
+validate:global-runner:
+  stage: validate
+  script:
+    - cd terraform/global/runner
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+  rules:
+    - changes:
+        - terraform/global/runner/**/*
+        - terraform/modules/**/*
+
+plan:global-runner:
+  extends: .aws_oidc_plan
+  stage: plan
+  script:
+    - cd terraform/global/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - terraform/global/runner/**/*
+        - terraform/modules/**/*
+
+apply:global-runner:
+  extends: .aws_oidc_apply
+  stage: apply
+  script:
+    - cd terraform/global/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform apply -input=false -auto-approve
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      changes:
+        - terraform/global/runner/**/*
+        - terraform/modules/**/*
+      when: manual
+  allow_failure: false
