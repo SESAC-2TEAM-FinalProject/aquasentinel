@@ -235,7 +235,7 @@ resource "kubernetes_manifest" "patched_app" {
       source = merge(
         {
           repoURL        = local.gitops_repo_url
-          targetRevision = "main"
+          targetRevision = var.gitops_revision
           path           = each.value.path
         },
         length(each.value.patches) > 0 ? {
@@ -524,9 +524,4 @@ resource "null_resource" "restart_lbc_for_gateway_api" {
   }
 }
 
-# root Application은 Terraform이 아니라 aquasentinel-gitops의
-# bootstrap/root-app.yaml을 단일 소스로 삼는다(서울과 동일, 2026-10-09
-# 변경 — 이 리소스와 그 YAML 파일 두 곳을 손으로 동기화해야 했던 걸
-# 없앰). ArgoCD Helm 설치 후 최초 1회 `kubectl apply -f bootstrap/root-app.yaml`로
-# 수동 부트스트랩하면, 이후엔 App-of-Apps 패턴대로 ArgoCD 자체가 apps/ 아래
-# 추가되는 모든 Application을 알아서 동기화한다.
+# root Application 은 root.tf 에서 Terraform 이 만든다(GitOps 저장소 주소 일원화 안 A, 2026-10-14).
