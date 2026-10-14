@@ -1,7 +1,14 @@
 #!/bin/bash
-# GitLab Runner EC2 부트스트랩 — Docker executor(호스트 Docker 직접 사용,
-# DinD 불필요 — 클러스터 내부 Kubernetes executor 때와 달리 privileged=false로
-# 충분하다). 로그는 /var/log/cloud-init-output.log(SSM으로 조회).
+# GitLab Runner EC2 부트스트랩 — Docker executor.
+# 로그는 /var/log/cloud-init-output.log(SSM으로 조회).
+#
+# privileged는 기존 클러스터 내부 러너와 동일하게 true로 둔다(2026-10-14).
+# 원래 계획은 "EC2에서는 DinD가 필요 없으니 false"였는데, 실제 레포를 확인해
+# 보니 web(app)은 kaniko로 전환 완료라 false로도 되지만 **api-module이 아직
+# docker:24-dind를 쓴다** — dind는 privileged가 필수라 false로 두면 그 레포
+# CI가 깨진다. 마이그레이션은 동작을 보존하는 게 우선이라(실행 위치 이전과
+# 빌드 방식 변경을 동시에 하면 장애 원인 분간이 안 됨), api-module이 kaniko로
+# 넘어온 뒤에 false로 내린다.
 set -euxo pipefail
 
 dnf update -y
@@ -26,7 +33,7 @@ gitlab-runner register \
   --token "$RUNNER_TOKEN" \
   --executor "docker" \
   --docker-image "alpine:3.20" \
-  --docker-privileged=false
+  --docker-privileged=true
 
 # concurrent는 register가 기본값(1)으로 이미 써두는 최상위 설정이라, 줄을
 # 추가하면 TOML 키 중복으로 설정 파싱 자체가 실패한다(2026-10-14 첫 부팅에서

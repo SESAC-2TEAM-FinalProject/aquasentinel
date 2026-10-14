@@ -293,6 +293,44 @@ apply:tokyo-dr:
 # matrix 없이 경로를 직접 지정한다.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 【임시】 신규 EC2 러너 검증 잡 — 7단계 컷오버 전 1회성 확인용이다.
+# 기존 파이프라인(tags: [eks-self-hosted])은 건드리지 않고, 임시 태그를 단
+# 새 러너에만 잡을 보내서 ① Docker executor 동작 ② 인스턴스 프로필 기반 ECR
+# 인증 ③ GitLab ID 토큰 기반 OIDC(러너 위치와 무관해야 함)를 확인한다.
+# **검증이 끝나면 이 두 잡은 삭제한다.**
+# ---------------------------------------------------------------------------
+
+verify-ec2-runner:basic:
+  stage: validate
+  tags: [eks-self-hosted-ec2-test]
+  # aws-cli 이미지도 ENTRYPOINT가 ["aws"]로 고정돼 있어, terraform 이미지와
+  # 같은 이유로 entrypoint를 비워야 러너가 넣는 셸 스크립트가 실행된다.
+  image:
+    name: amazon/aws-cli:2.17.0
+    entrypoint: [""]
+  script:
+    - echo "runner host =" $(hostname)
+    # 인스턴스 프로필이 제대로 붙었는지 — gitlab-runner-ec2 역할이어야 한다.
+    - aws sts get-caller-identity
+    # ECR 인증(빌드 잡이 실제로 쓰는 경로)
+    - aws ecr get-login-password --region ap-northeast-2 > /dev/null && echo "ECR auth OK"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+verify-ec2-runner:oidc:
+  extends: .aws_oidc_plan
+  stage: validate
+  tags: [eks-self-hosted-ec2-test]
+  script:
+    # OIDC는 GitLab이 발급한 ID 토큰 기반이라 러너 위치와 무관하게 동작해야
+    # 한다 — 인스턴스 프로필이 아니라 terraform-plan 역할로 찍히면 정상.
+    - cd terraform/global/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
 validate:global-runner:
   stage: validate
   script:
