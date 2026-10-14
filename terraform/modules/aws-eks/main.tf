@@ -202,6 +202,17 @@ resource "aws_eks_node_group" "default" {
     version = aws_launch_template.node.latest_version
   }
 
+  labels = var.node_labels
+
+  dynamic "taint" {
+    for_each = var.node_taints
+    content {
+      key    = taint.value.key
+      value  = taint.value.value
+      effect = taint.value.effect
+    }
+  }
+
   tags = var.tags
 
   depends_on = [

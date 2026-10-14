@@ -71,9 +71,11 @@ module "eks" {
   # 서브넷과 워커 노드 서브넷이 같은 AZ 집합일 필요는 없으므로(노드는 VPC 라우팅으로
   # 컨트롤플레인과 통신), 2b는 카펜터 EC2NodeClass의 워커 전용 서브넷으로만 쓴다.
   private_subnet_ids = slice(data.terraform_remote_state.network.outputs.private_app_subnet_ids, 0, 2)
-  # 기존 관리형 노드그룹도 동일하게 생성 당시 서브넷(2a, 2c)으로 고정 — subnet_ids가
-  # 바뀌면 노드그룹이 강제 교체(destroy+recreate)되기 때문(modules/aws-eks 주석 참고).
-  node_group_subnet_ids = slice(data.terraform_remote_state.network.outputs.private_app_subnet_ids, 0, 2)
+  # 2026-10-14 — 스테이트풀 복귀 작업으로 관리형 노드그룹이 다시 3 AZ(2a/2b/2c)
+  # 전부를 쓰게 된다. subnet_ids 변경이라 노드그룹이 강제 재생성되는데, 지금 이
+  # 노드그룹엔 카펜터 컨트롤러만 있어서(일반/스테이트풀 워크로드 없음) 안전하다
+  # (modules/aws-eks 주석 참고 — 예전엔 CNPG/NATS가 떠 있어서 이 변경이 위험했다).
+  node_group_subnet_ids = slice(data.terraform_remote_state.network.outputs.private_app_subnet_ids, 0, 3)
 
   endpoint_public_access  = var.endpoint_public_access
   endpoint_private_access = var.endpoint_private_access
@@ -84,11 +86,32 @@ module "eks" {
   node_min_size       = var.node_min_size
   node_max_size       = var.node_max_size
 
+  # 스테이트풀(CNPG·NATS) 전용 고정 노드그룹 — 카펜터 stateful NodePool이 쓰던
+  # 라벨/taint 키·값을 그대로 재사용해서 워크로드 매니페스트(nodeSelector/
+  # tolerations)를 건드릴 필요가 없게 했다.
+  node_labels = {
+    "aquasentinel.io/nodepool" = "stateful"
+  }
+  node_taints = [
+    {
+      key    = "dedicated"
+      value  = "stateful"
+      effect = "NO_SCHEDULE"
+    }
+  ]
+
   enable_prefix_delegation = var.enable_prefix_delegation
   max_pods_per_node        = var.max_pods_per_node
   enable_ebs_csi           = var.enable_ebs_csi
 
-  team_members      = var.team_members
+  # var.team_members(terraform.tfvars, 커밋 안 됨)는 이미 존재하는 외부 IAM 개체(같은
+  # 계정 User, 또는 수동 생성된 크로스어카운트 Role)를 그대로 가리키고, 여기서는 이
+  # 컴포넌트가 직접 만드는 크로스어카운트 Role(cross-account-members.tf)을 합류시킨다
+  # — ARN을 tfvars에 손으로 또 적으면 두 곳이 어긋날 위험이 생긴다(2026-10-14).
+  team_members = concat(
+    var.team_members,
+    [for name, role in aws_iam_role.cross_account_member : { name = name, iam_arn = role.arn }]
+  )
   access_policy_arn = var.access_policy_arn
 
   # CI Terraform plan 역할 — 3-gitops plan 이 클러스터를 읽을 수 있게(읽기 전용).

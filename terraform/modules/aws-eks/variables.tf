@@ -66,6 +66,22 @@ variable "node_max_size" {
   default = 4
 }
 
+variable "node_labels" {
+  description = "관리형 노드그룹(aws_eks_node_group.default) 전체에 적용할 쿠버네티스 노드 라벨."
+  type        = map(string)
+  default     = {}
+}
+
+variable "node_taints" {
+  description = "관리형 노드그룹 전체에 적용할 taint 목록. effect는 AWS API 표기(NO_SCHEDULE/NO_EXECUTE/PREFER_NO_SCHEDULE)를 쓴다 — kubectl이 보여주는 NoSchedule 표기와 다르다."
+  type = list(object({
+    key    = string
+    value  = string
+    effect = string
+  }))
+  default = []
+}
+
 variable "enable_prefix_delegation" {
   description = "VPC CNI Prefix Delegation 활성화 여부. 계획서 11.1/11.5절 — 파드 70~80개 전망에 ENI 슬롯이 부족해 반드시 켜야 한다. 새로 조인하는 노드에만 적용되므로 클러스터 생성 시점에 켠다."
   type        = bool
