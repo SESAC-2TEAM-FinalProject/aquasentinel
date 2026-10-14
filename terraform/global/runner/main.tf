@@ -17,6 +17,10 @@
 # global/cicd와 같은 종류의 "닭과 달걀" 예외이지만, 이후부터는 일반
 # 컴포넌트와 동일하게 CI validate/plan 자동화 대상에 포함한다(.gitlab-ci.yml
 # 참고 — apply만 계속 수동).
+#
+# 그래서 backend.hcl도 global/bootstrap·cicd(로컬 전용)가 아니라 seoul·tokyo
+# 컴포넌트와 같은 쪽 관례를 따라 git에 올린다 — CI가 읽지 못하면
+# terraform init 자체가 실패한다(2026-10-14 첫 파이프라인에서 실제 발생).
 
 provider "aws" {
   region = var.region
