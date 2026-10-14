@@ -61,6 +61,12 @@ module "eks" {
   cluster_version    = var.cluster_version
   vpc_id             = data.terraform_remote_state.network.outputs.vpc_id
   private_subnet_ids = data.terraform_remote_state.network.outputs.private_app_subnet_ids
+  # 서울은 컨트롤플레인(private_subnet_ids)과 관리형 노드그룹(node_group_subnet_ids)
+  # 서브넷을 분리했지만(2026-10-13, subnet_ids 변경 시 노드그룹 강제 재생성 이슈 —
+  # modules/aws-eks 주석 참고), 도쿄는 아직 3 AZ 확장 작업 전이라 분리할 이유가
+  # 없다 — 컨트롤플레인과 동일한 서브넷 목록을 그대로 재사용한다. 도쿄도 나중에
+  # 3 AZ로 확장하게 되면 서울과 동일하게 분리해야 한다.
+  node_group_subnet_ids = data.terraform_remote_state.network.outputs.private_app_subnet_ids
 
   endpoint_public_access  = var.endpoint_public_access
   endpoint_private_access = var.endpoint_private_access
