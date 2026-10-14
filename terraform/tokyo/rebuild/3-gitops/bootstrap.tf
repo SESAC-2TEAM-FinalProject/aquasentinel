@@ -12,6 +12,10 @@ data "aws_secretsmanager_secret_version" "gitops_pat" {
 resource "null_resource" "wait_for_api_module_namespace" {
   depends_on = [kubernetes_manifest.patched_app["api-module-db-secret"]]
 
+  # (2026-10-14, 서울 bootstrap.tf와 동일 수정) 마지막 줄이 rm -f면 60회 polling이
+  # 전부 실패해도 항상 exit 0으로 끝나 타임아웃이 가려진다 — 종료 코드를 명시적으로
+  # 판정한다. 도쿄는 아직 한 번도 실제 적용된 적 없어서 최초 기동 때 이 버그가
+  # 그대로 재현될 뻔했다(회신 문서 Q9 참고).
   provisioner "local-exec" {
     command = <<-EOT
       CA_FILE=$(mktemp)
@@ -21,7 +25,12 @@ resource "null_resource" "wait_for_api_module_namespace" {
         sleep 5
       done
       kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get namespace api-module
+      STATUS=$?
       rm -f "$CA_FILE"
+      if [ "$STATUS" -ne 0 ]; then
+        echo "TIMEOUT: api-module namespace not found after 5m" >&2
+        exit 1
+      fi
     EOT
   }
 }
