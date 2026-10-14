@@ -19,10 +19,34 @@
 
 locals {
   patched_apps = {
+    # 백업 역할 ARN · 백업 경로 — git 원본이 서울 값이라 서울에선 같은 값을 다시 넣는 셈이지만,
+    # 같은 코드를 다른 계정(시험 구역)에 apply 하면 그 계정 값이 들어가 운영 백업 버킷에 쓰지 않는다
+    # (도쿄 applications.tf 의 같은 패치와 같은 모양).
     "cloudnativepg-cluster" = {
       path      = "manifests/cloudnativepg/cluster"
       namespace = "aquasentinel-db"
-      patches   = []
+      patches = [
+        {
+          target = { kind = "Cluster", name = "aquasentinel-pg" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/serviceAccountTemplate/metadata/annotations/eks.amazonaws.com~1role-arn"
+              value = data.terraform_remote_state.cluster.outputs.cloudnativepg_role_arn
+            }
+          ])
+        },
+        {
+          target = { kind = "ObjectStore", name = "aquasentinel-backup-store" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/configuration/destinationPath"
+              value = "s3://${data.terraform_remote_state.persistent.outputs.bucket_names["observability"]}/${data.terraform_remote_state.persistent.outputs.cloudnativepg_prefix}"
+            }
+          ])
+        },
+      ]
     }
     "grafana-secret" = {
       path      = "manifests/grafana/secret"
@@ -128,6 +152,18 @@ locals {
               op    = "replace"
               path  = "/spec/hostnames/0"
               value = data.terraform_remote_state.persistent.outputs.domain_name
+            }
+          ])
+        },
+        # 로그인 토큰 발급자 주소 — keycloak 패치와 같은 auth 서브도메인. 서울은 git 값과 같고,
+        # 시험 구역은 그 구역 도메인의 로그인 서버를 보게 된다.
+        {
+          target = { kind = "ConfigMap", name = "aquasentinel-web" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/data/OIDC_ISSUER"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel"
             }
           ])
         },
