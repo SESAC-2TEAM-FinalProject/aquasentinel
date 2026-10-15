@@ -266,6 +266,16 @@ locals {
         requests:
           cpu: 25m
           memory: 230Mi
+      # 서비스 배치 최종 제안(2026-10-15) 7장 단계 3, 3.3절 — 고유 데이터(로그)를
+      # 들고 있어 1벌이라 멈춤(Q1) + RWO 볼륨이라 늘려도 쪼개짐(Q2 불통과).
+      # 온디맨드 3대 고정 노드로 이전.
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
 
     serviceAccount:
       create: false
@@ -353,6 +363,15 @@ locals {
           requests:
             cpu: 5m
             memory: 200Mi
+        # 7장 단계 3 — 알림 발생량 기반, 사용자 트래픽과 무관해 안 늘어남(Q2
+        # 불통과, 4장 요약표) + 1벌이라 멈춤(Q1). 온디맨드 3대 고정 노드로 이전.
+        nodeSelector:
+          aquasentinel.io/nodepool: stateful
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: stateful
+            effect: NoSchedule
 
     prometheus:
       serviceAccount:
@@ -364,6 +383,16 @@ locals {
           requests:
             cpu: 60m
             memory: 950Mi
+        # 7장 단계 3, 4장 그룹 1 — RWO 볼륨이라 늘려도 쪼개짐 + 부하가 스크랩
+        # 타겟 수로 정해져 트래픽과 무관(Q2 불통과) + 1벌이라 멈춤(Q1).
+        # 온디맨드 3대 고정 노드로 이전.
+        nodeSelector:
+          aquasentinel.io/nodepool: stateful
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: stateful
+            effect: NoSchedule
 
         # 서비스 배치 최종 제안(2026-10-15) 9장 안건 5 — requests 산정 기준으로
         # "Prometheus 2주치 P95"를 쓰기로 했는데 retention이 2d라 애초에 2주치가

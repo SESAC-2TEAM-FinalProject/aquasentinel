@@ -98,42 +98,94 @@ resource "helm_release" "argocd" {
   # 없는 BestEffort라 메모리 압박 시 축출 1순위다. Prometheus 2주치 P95(실측
   # 당시 보유 데이터는 ~46시간) 기준으로 산정, CPU는 5m 단위·메모리는 P95보다
   # 약간 위로 올림.
+  # 서비스 배치 최종 제안(2026-10-15) 7장 단계 3, 4장 그룹 3 — 부하가 "관리
+  # 리소스 수"로 정해져 사용자 트래픽과 무관(Q2 불통과) + 7종 전부 1벌이라
+  # 멈춤(Q1). 온디맨드 3대 고정 노드로 이전(CNPG가 쓰는 것과 동일한 조합).
   values = [<<-EOT
     controller:
       resources:
         requests:
           cpu: 75m
           memory: 670Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
     dex:
       resources:
         requests:
           cpu: 5m
           memory: 50Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
     redis:
       resources:
         requests:
           cpu: 5m
           memory: 30Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
     server:
       resources:
         requests:
           cpu: 5m
           memory: 40Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
     repoServer:
       resources:
         requests:
           cpu: 10m
           memory: 180Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
     applicationSet:
       resources:
         requests:
           cpu: 5m
           memory: 30Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
     notifications:
       resources:
         requests:
           cpu: 5m
           memory: 30Mi
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
   EOT
   ]
 }
