@@ -88,6 +88,12 @@ variable "enable_prefix_delegation" {
   default     = true
 }
 
+variable "enable_network_policy" {
+  description = "VPC CNI 네트워크 정책 집행(vpc-cni enableNetworkPolicy). 끄면 NetworkPolicy 객체가 있어도 집행되지 않는다. 켜는 순간 클러스터에 이미 있는 정책(argocd·keycloak 등)도 처음으로 집행되므로, 켤 때 그 파드들이 READY를 유지하는지 확인한다(egress 작업계획서 2장 단계 2)."
+  type        = bool
+  default     = false
+}
+
 variable "max_pods_per_node" {
   description = "커스텀 launch template으로 EKS 부트스트랩에 병합하는 kubelet --max-pods 값 (계획서 11.1절 근거)."
   type        = number

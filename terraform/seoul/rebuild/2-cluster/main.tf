@@ -101,6 +101,7 @@ module "eks" {
   ]
 
   enable_prefix_delegation = var.enable_prefix_delegation
+  enable_network_policy    = var.enable_network_policy
   max_pods_per_node        = var.max_pods_per_node
   enable_ebs_csi           = var.enable_ebs_csi
 
