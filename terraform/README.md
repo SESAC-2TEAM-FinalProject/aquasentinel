@@ -67,6 +67,11 @@ S3 백엔드를 쓸 수 없다 — 로컬 state(`terraform/global/bootstrap/terr
 `backend.hcl`/`terraform.tfvars`에 수동으로 채워 넣는다. 이 로컬 state 파일은
 유실되면 복구가 어려우므로 별도로 백업해둘 것(git에는 올리지 않음).
 
+`rebuild/*`를 다시 세운 뒤에는 데드맨 체크가 자동으로 다시 감시하는지
+확인한다 — `scripts/alerting/maintenance.sh status`로 체크 `up`. 3-gitops
+apply 후 15분이 지나도 `paused`면 `maintenance.sh stop`(`scripts/alerting/README.md`
+"재구축").
+
 ## 파괴(destroy) 순서
 
 재구축 드릴이나 비용 절감을 위해 `rebuild/*`를 내릴 때는 적용 순서의
@@ -79,6 +84,12 @@ S3 백엔드를 쓸 수 없다 — 로컬 state(`terraform/global/bootstrap/terr
 seoul/rebuild/4-edge → 3-gitops → 2-cluster → 1-network
 tokyo/rebuild/4-edge → 3-gitops → 2-cluster → 1-network   (평소 운영 시 도쿄는 이 상태)
 ```
+
+**destroy 전에 알람 점검 모드를 먼저 켠다** — 지우는 동안 구성 요소가 하나씩
+사라지는 것을 Alertmanager가 장애로 알리고, Alertmanager 자신이 사라지면
+데드맨이 울린다. `scripts/alerting/maintenance.sh start "teardown <날짜>" <기간>`을
+ArgoCD 자동 동기화 끄기 등 다른 수동 단계보다 먼저 실행하고, 기간은 `2-cluster`
+destroy가 끝날 때까지 덮게 잡는다(`scripts/alerting/README.md` "teardown").
 
 ## 컴포넌트 공통 규칙
 
