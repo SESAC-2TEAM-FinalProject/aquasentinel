@@ -84,6 +84,13 @@ variable "enable_prefix_delegation" {
   default = true
 }
 
+# VPC CNI 네트워크 정책 집행 — 기본 꺼짐. egress 계층 1 반영 때 true 로 바꾸는 한 줄 커밋으로 켠다
+# (egress 작업계획서 2장 단계 2 — 켜는 순간 argocd·keycloak 정책도 처음 집행되므로 사전 공지 + READY 확인).
+variable "enable_network_policy" {
+  type    = bool
+  default = false
+}
+
 variable "max_pods_per_node" {
   type    = number
   default = 110

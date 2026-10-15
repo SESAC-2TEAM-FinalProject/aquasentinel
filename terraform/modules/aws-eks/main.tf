@@ -226,15 +226,21 @@ resource "aws_eks_node_group" "default" {
 # 코어 애드온
 # ---------------------------------------------------------------------------
 
+# vpc-cni 애드온 설정 — 켠 기능만 모아 JSON 하나로 넘긴다. 둘 다 끄면 null(애드온 기본값).
+# enable_network_policy 를 false 로 두면 만들어지는 JSON 이 이전과 똑같아(키가 추가되지 않음)
+# 이 코드를 머지해도 아무것도 바뀌지 않는다 — 실제로 켜는 건 컴포넌트 쪽 변수(2026-10-14, egress 계층 1).
+locals {
+  vpc_cni_config = merge(
+    var.enable_prefix_delegation ? { env = { ENABLE_PREFIX_DELEGATION = "true" } } : {},
+    var.enable_network_policy ? { enableNetworkPolicy = "true" } : {},
+  )
+}
+
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "vpc-cni"
 
-  configuration_values = var.enable_prefix_delegation ? jsonencode({
-    env = {
-      ENABLE_PREFIX_DELEGATION = "true"
-    }
-  }) : null
+  configuration_values = length(local.vpc_cni_config) > 0 ? jsonencode(local.vpc_cni_config) : null
 
   resolve_conflicts_on_update = "OVERWRITE"
 }
