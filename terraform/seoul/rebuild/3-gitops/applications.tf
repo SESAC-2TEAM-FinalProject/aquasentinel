@@ -342,7 +342,12 @@ locals {
           eks.amazonaws.com/role-arn: "${data.terraform_remote_state.cluster.outputs.thanos_role_arn}"
 
       prometheusSpec:
-        retention: 2d
+        # 서비스 배치 최종 제안(2026-10-15) 9장 안건 5 — requests 산정 기준으로
+        # "Prometheus 2주치 P95"를 쓰기로 했는데 retention이 2d라 애초에 2주치가
+        # 쌓일 수 없었다. 지금 당장의 산정은 보유된 ~2일치로 하되(아래 참고),
+        # 앞으로는 쌓이도록 늘려둔다. 하루 사용량 실측 약 0.6GiB → 14일치
+        # 약 8.75GiB, 기존 20Gi PVC 안에 여유 있게 들어감(증설 불필요).
+        retention: 14d
 
         # 기본값(true)이면 release: kube-prometheus-stack 라벨이 있는
         # PodMonitor/ServiceMonitor/PrometheusRule만 인식한다 — NATS 차트가
