@@ -16,6 +16,10 @@ variable "repository_names" {
     웹 서비스(aquasentinel-web 레포) 이미지 3종(web-frontend/status-svc/
     ocean-batch)은 2026-10-01 이미지 이름 확정(HANDOFF.md 1절)에 따라 추가함.
     alert-svc는 아직 미구현이라 레포만 안 만듦 — 이미지가 생기면 추가.
+
+    egress-proxy는 2026-10-15 재희님 요청(결정 4, egress 프록시 반영)에 따라
+    추가 — 팀이 직접 빌드하는 이미지가 아니라 Docker Hub 공식 squid 이미지를
+    그대로 미러링해 둔다(IMMUTABLE 레포라 태그 덮어쓰기 없이 버전 고정).
   EOT
   type        = list(string)
   default = [
@@ -27,6 +31,7 @@ variable "repository_names" {
     "web-frontend",
     "status-svc",
     "ocean-batch",
+    "egress-proxy",
   ]
 }
 
