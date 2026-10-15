@@ -434,6 +434,14 @@ locals {
     controllerConfig:
       featureGates:
         ALBGatewayAPI: true
+
+    # 서비스 배치 최종 제안(2026-10-15) 1장 ①-나, 3.4절, 7장 단계 1-d — 이미
+    # 2벌이지만 같은 스팟 노드 한 대에 몰려 있어(실측 확인) 그 노드가 회수되면
+    # 2벌 다 동시에 사라진다. coredns·ebs-csi와 같은 패턴으로 노드 단위 강제 분산.
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
   EOT
 }
 
