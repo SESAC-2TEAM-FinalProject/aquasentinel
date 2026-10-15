@@ -102,6 +102,20 @@ resource "helm_release" "argocd" {
   # 리소스 수"로 정해져 사용자 트래픽과 무관(Q2 불통과) + 7종 전부 1벌이라
   # 멈춤(Q1). 온디맨드 3대 고정 노드로 이전(CNPG가 쓰는 것과 동일한 조합).
   values = [<<-EOT
+    # OutOfSync 3건(cloudnativepg-cluster·nats·api-module-db-secret) 원인
+    # 조사(2026-10-15) 중 발견 — 오늘 고친 HTTPRoute 2건·LoadBalancerConfiguration
+    # 까지 전부 같은 근본 원인이었다. ArgoCD는 기본적으로 git 매니페스트와
+    # 라이브 상태를 "단순 구조 비교"로만 대조하는데, 쿠버네티스 API 서버나
+    # 오퍼레이터(CNPG)·CRD 웹훅(ESO)이 스키마 기본값을 채워 넣으면 git엔 없고
+    # 라이브엔 있는 필드가 생겨 영구 OutOfSync로 뜬다. Server-Side Diff를
+    # 켜면 ArgoCD가 git 매니페스트를 API 서버에 dry-run으로 통과시켜본 뒤
+    # 비교하므로 이런 암묵적 기본값을 전부 정상 인식한다 — CRD마다 기본값을
+    # git에 일일이 베껴 적는 방식(HTTPRoute 때 했던 방식)보다 근본적이고,
+    # 오퍼레이터 버전이 바뀌어 기본값이 달라져도 깨지지 않는다.
+    configs:
+      params:
+        controller.diff.server.side: "true"
+
     controller:
       resources:
         requests:
