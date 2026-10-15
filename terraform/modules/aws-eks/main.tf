@@ -1,5 +1,49 @@
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
+
+  # -------------------------------------------------------------------------
+  # 코어 애드온(coredns·EBS CSI 컨트롤러) 배치 제어 (2026-10-15 추가)
+  #
+  # 배경: coredns 2벌과 ebs-csi-controller 2벌이 "2벌이니 안전"해 보였지만
+  # 실측해보니 4개 전부 같은 스팟 노드 한 대(ip-10-0-47-204)에 앉아 있었다.
+  # 두 애드온의 기본 anti-affinity가 preferred(권장)라서, 스케줄 여유가
+  # 빠듯하면 그냥 한 노드에 몰린다. 그 노드가 스팟 회수되면
+  #   - coredns 0개            → 클러스터 DNS 전면 다운
+  #   - ebs-csi-controller 0개 → 볼륨 attach/detach 불가(CNPG 복구까지 막힘)
+  # 가 동시에 터진다.
+  # -------------------------------------------------------------------------
+
+  # node_taints(AWS API 표기)를 쿠버네티스 toleration 표기로 변환한다.
+  # 노드그룹 taint가 바뀌어도 애드온 toleration이 자동으로 따라오게 하려고
+  # 하드코딩하지 않고 var.node_taints에서 파생시킨다.
+  taint_effect_to_k8s = {
+    NO_SCHEDULE        = "NoSchedule"
+    NO_EXECUTE         = "NoExecute"
+    PREFER_NO_SCHEDULE = "PreferNoSchedule"
+  }
+
+  core_addon_tolerations = [
+    for t in var.node_taints : {
+      key      = t.key
+      operator = "Equal"
+      value    = t.value
+      effect   = local.taint_effect_to_k8s[t.effect]
+    }
+  ]
+
+  # "서로 다른 노드에 반드시 흩어져라"를 강제한다(DoNotSchedule).
+  # preferred가 아니라 required여야 하는 이유는 위 배경 그대로다.
+  core_addon_topology_spread = {
+    for name, labels in {
+      coredns = { "k8s-app" = "kube-dns" }
+      ebs_csi = { "app" = "ebs-csi-controller" }
+      } : name => [{
+        maxSkew           = 1
+        topologyKey       = "kubernetes.io/hostname"
+        whenUnsatisfiable = "DoNotSchedule"
+        labelSelector     = { matchLabels = labels }
+    }]
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -249,6 +293,19 @@ resource "aws_eks_addon" "coredns" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "coredns"
 
+  # 배치 제어 — locals의 "코어 애드온 배치 제어" 주석 참고.
+  # replicaCount를 3으로 올린 이유: hostname DoNotSchedule 제약 때문에 3벌은
+  # 반드시 서로 다른 노드 3대에 흩어진다. 카펜터 스팟 노드는 2대뿐이므로
+  # "최소 1벌은 고정 노드그룹(온디맨드)에 앉는다"가 수학적으로 보장된다 —
+  # 스팟 2대가 동시에 회수돼도 DNS가 살아남는다. (coredns는 파드당 100m/70Mi로
+  # 가벼워서 1벌 추가 비용이 사실상 없다.)
+  # tolerations가 없으면 고정 노드그룹에 아예 못 앉아 위 보장이 성립하지 않는다.
+  configuration_values = jsonencode({
+    replicaCount              = 3
+    tolerations               = local.core_addon_tolerations
+    topologySpreadConstraints = local.core_addon_topology_spread["coredns"]
+  })
+
   resolve_conflicts_on_update = "OVERWRITE"
   depends_on                  = [aws_eks_node_group.default]
 }
@@ -308,6 +365,19 @@ resource "aws_eks_addon" "ebs_csi" {
   cluster_name             = aws_eks_cluster.this.name
   addon_name               = "aws-ebs-csi-driver"
   service_account_role_arn = aws_iam_role.ebs_csi[0].arn
+
+  # 컨트롤러 배치 제어 — coredns와 같은 이유·같은 방식(locals 주석 참고).
+  # 컨트롤러가 전멸하면 볼륨 attach/detach가 멈춰서, 노드가 복구돼도
+  # CNPG가 자기 EBS를 다시 붙이지 못한다. DNS만큼이나 복구의 전제 조건이라
+  # 동일하게 3벌 + 노드 분산으로 간다.
+  # node 쪽은 DaemonSet이라 손대지 않는다(이미 5대 전부에 떠 있음).
+  configuration_values = jsonencode({
+    controller = {
+      replicaCount              = 3
+      tolerations               = local.core_addon_tolerations
+      topologySpreadConstraints = local.core_addon_topology_spread["ebs_csi"]
+    }
+  })
 
   resolve_conflicts_on_update = "OVERWRITE"
   depends_on                  = [aws_eks_node_group.default]
