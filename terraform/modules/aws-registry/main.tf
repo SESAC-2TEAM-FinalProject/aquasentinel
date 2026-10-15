@@ -67,3 +67,28 @@ resource "aws_ecr_lifecycle_policy" "this" {
     ]
   })
 }
+
+# 다른 계정(시험 구역)이 이미지를 **받기만** 하게 허용 — 운영과 같은 이미지를 쓰기 위해(GitOps 일원화 v2 5절 "ECR pull 허용").
+# 쓰기(push) · 삭제 권한은 주지 않는다. 받는 쪽 계정의 노드 역할에도 ECR 읽기 권한(AmazonEC2ContainerRegistryReadOnly)이 있어야 한다.
+# 목록이 비어 있으면 아무것도 만들지 않는다(기본값 — 운영 변화 없음).
+resource "aws_ecr_repository_policy" "pull_only" {
+  for_each = length(var.pull_only_account_ids) > 0 ? aws_ecr_repository.this : {}
+
+  repository = each.value.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "PullOnlyFromOtherAccounts"
+        Effect    = "Allow"
+        Principal = { AWS = [for id in var.pull_only_account_ids : "arn:aws:iam::${id}:root"] }
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchCheckLayerAvailability",
+        ]
+      }
+    ]
+  })
+}

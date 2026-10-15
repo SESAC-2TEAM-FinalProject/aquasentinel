@@ -107,6 +107,9 @@ module "registry" {
 
   enable_cross_region_replication = true
   replication_destination_region  = "ap-northeast-1"
+
+  # 시험 구역(테스트 필드) 계정 — 운영 이미지를 받기만 한다(쓰기 권한 없음). 시험 구역을 닫으면 목록에서 뺀다.
+  pull_only_account_ids = ["926762923779"]
 }
 
 module "dns" {
