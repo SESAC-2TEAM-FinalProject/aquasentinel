@@ -215,6 +215,27 @@ data "aws_iam_policy_document" "apply_iam_scoped" {
   # [rebuild/2-cluster] 첫 실제 실행에서 "missing permissions for
   # 'iam:GetRole'"로 발견). 역할이 없을 경우를 대비해 CreateServiceLinkedRole도
   # 같이 허용한다.
+  # 카펜터 EC2NodeClass가 쓰는 노드 인스턴스 프로필(aws_iam_instance_profile.node,
+  # modules/aws-eks/main.tf)은 role/policy와 ARN 네임스페이스가 달라(instance-profile)
+  # 위 스코프 정책에 안 걸린다. apply:seoul [rebuild/2-cluster] 첫 CI 실행에서
+  # "missing permissions for 'iam:GetInstanceProfile'"로 발견(2026-10-15).
+  statement {
+    sid    = "ScopedIamInstanceProfileManagement"
+    effect = "Allow"
+    actions = [
+      "iam:CreateInstanceProfile",
+      "iam:DeleteInstanceProfile",
+      "iam:GetInstanceProfile",
+      "iam:AddRoleToInstanceProfile",
+      "iam:RemoveRoleFromInstanceProfile",
+      "iam:TagInstanceProfile",
+      "iam:UntagInstanceProfile",
+    ]
+    resources = [
+      "arn:aws:iam::*:instance-profile/${var.project_name}-*",
+    ]
+  }
+
   statement {
     sid    = "EksServiceLinkedRoleManagement"
     effect = "Allow"
