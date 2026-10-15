@@ -34,6 +34,28 @@ provider "aws" {
   }
 }
 
+# Route53 헬스체크 지표(AWS/Route53 HealthCheckStatus)는 us-east-1에만 쌓인다 —
+# 그 지표를 보는 CloudWatch 알람(alarms.tf)도 us-east-1에 만든다. 알람이 보내는
+# SNS 토픽은 persistent(us-east-1)에 있다.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      project     = var.project_name
+      owner       = var.owner
+      environment = var.environment
+      managed_by  = "terraform"
+      component   = "4-edge"
+    }
+  }
+}
+
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+}
+
 data "terraform_remote_state" "cluster" {
   backend = "s3"
 

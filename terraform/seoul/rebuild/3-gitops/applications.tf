@@ -53,6 +53,19 @@ locals {
       namespace = "monitoring"
       patches   = []
     }
+    # 알람 수신처(Discord·데드맨)와 ArgoCD 알림 시크릿 — Secrets Manager 이름 접두사가
+    # 리전마다 달라(ESO 권한도 그 접두사로 제한) apps/가 아니라 여기서 만든다. 서울은
+    # git 원본이 서울 이름이라 패치 없음(알람 파이프라인 묶음 B, 2026-10-14).
+    "alerting-secret" = {
+      path      = "manifests/alerting/secret"
+      namespace = "monitoring"
+      patches   = []
+    }
+    "argocd-notifications-secret" = {
+      path      = "manifests/argocd/notifications-secret"
+      namespace = "argocd"
+      patches   = []
+    }
     "api-module-db-secret" = {
       path      = "manifests/api-module/db-secret"
       namespace = "api-module"

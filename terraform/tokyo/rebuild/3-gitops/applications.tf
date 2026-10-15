@@ -97,6 +97,33 @@ locals {
         },
       ]
     }
+    # 알람 수신처(Discord·데드맨)와 ArgoCD 알림 시크릿 — 서울과 같은 매니페스트에 도쿄
+    # Secrets Manager 이름만 패치한다(알람 파이프라인 묶음 B, 2026-10-14). 도쿄용 값(특히
+    # 데드맨 핑 URL은 서울과 다른 체크)은 도쿄 Warm Standby 구성 때 등록한다.
+    "alerting-secret" = {
+      path      = "manifests/alerting/secret"
+      namespace = "monitoring"
+      patches = [
+        {
+          target = { kind = "ExternalSecret", name = "alertmanager-receivers" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/dataFrom/0/extract/key", value = "${local.name_prefix}-alertmanager-receivers" }
+          ])
+        },
+      ]
+    }
+    "argocd-notifications-secret" = {
+      path      = "manifests/argocd/notifications-secret"
+      namespace = "argocd"
+      patches = [
+        {
+          target = { kind = "ExternalSecret", name = "argocd-notifications-secret" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/dataFrom/0/extract/key", value = "${local.name_prefix}-argocd-notifications" }
+          ])
+        },
+      ]
+    }
     "api-module-db-secret" = {
       path      = "manifests/api-module/db-secret"
       namespace = "api-module"

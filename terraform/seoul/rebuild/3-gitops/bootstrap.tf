@@ -76,6 +76,67 @@ resource "kubernetes_service_account_v1" "api_module_processor" {
   }
 }
 
+# Notifications 설정이 Helm values에 있는 이유: ConfigMap·Secret이 Helm 소유라
+# 직접 고치면 재구축·helm upgrade 때 사라진다.
+# secret.create: false인 이유: 웹훅을 git·Terraform state에 두지 않으려고
+# ExternalSecret(manifests/argocd/notifications-secret, Terraform patched_apps)이
+# 시크릿을 만든다.
+# Discord를 webhook 서비스로 보내는 이유: ArgoCD에 Discord 전용 서비스가 없다.
+# on-degraded-10m의 10분 조건: 재구축 때 Application들이 잠깐 Degraded를 거치므로,
+# 동기화가 끝나고 10분 넘게 이어질 때만 보낸다. Alertmanager의 재구축 억제 규칙은
+# 이 경로에 적용되지 않는다.
+# 구독을 Application 31개에 annotation으로 달지 않고 전역 구독 하나로 건 이유:
+# 새 Application도 자동으로 포함된다.
+# 템플릿의 toJson·trunc: 실패 메시지에 따옴표·줄바꿈이 있어도 JSON이 깨지지 않게
+# 하고, Discord 메시지 한도(2000자) 안에 들게 한다.
+# 서울·도쿄가 같은 값을 쓴다(웹훅 값은 각 리전 Secrets Manager에서 온다).
+locals {
+  argocd_values = <<-EOT
+    notifications:
+      secret:
+        create: false
+
+      notifiers:
+        service.webhook.discord: |
+          url: $discord-webhook-url
+          headers:
+            - name: Content-Type
+              value: application/json
+
+      templates:
+        template.app-degraded: |
+          webhook:
+            discord:
+              method: POST
+              body: |
+                {"username": "ArgoCD", "content": {{ printf "**[ArgoCD] %s — Degraded 10분 이상**\n동기화 리비전: %s\n확인: kubectl get application %s -n argocd -o jsonpath='{.status.health}'" .app.metadata.name .app.status.sync.revision .app.metadata.name | toJson }}}
+        template.app-sync-failed: |
+          webhook:
+            discord:
+              method: POST
+              body: |
+                {"username": "ArgoCD", "content": {{ printf "**[ArgoCD] %s — 동기화 실패 (%s)**\n%s" .app.metadata.name .app.status.operationState.phase (.app.status.operationState.message | trunc 1500) | toJson }}}
+
+      triggers:
+        trigger.on-degraded-10m: |
+          - description: 마지막 동기화가 끝난 뒤 10분 넘게 Degraded
+            when: app.status.health.status == 'Degraded' and app.status.operationState != nil and app.status.operationState.finishedAt != nil and time.Now().Sub(time.Parse(app.status.operationState.finishedAt)).Minutes() >= 10
+            send: [app-degraded]
+        trigger.on-sync-failed: |
+          - description: 동기화 실패
+            when: app.status.operationState != nil and app.status.operationState.phase in ['Error', 'Failed']
+            oncePer: app.status.operationState?.syncResult?.revision
+            send: [app-sync-failed]
+
+      subscriptions:
+        - recipients:
+            - discord
+          triggers:
+            - on-degraded-10m
+            - on-sync-failed
+  EOT
+}
+
 # ---------------------------------------------------------------------------
 # Terraform이 직접 설치하는 유일한 Helm 차트. 이후 모든 워크로드(ESO 포함)는
 # 이 Argo CD가 aquasentinel-gitops 레포를 보고 스스로 동기화한다.
@@ -101,6 +162,8 @@ resource "helm_release" "argocd" {
   # 서비스 배치 최종 제안(2026-10-15) 7장 단계 3, 4장 그룹 3 — 부하가 "관리
   # 리소스 수"로 정해져 사용자 트래픽과 무관(Q2 불통과) + 7종 전부 1벌이라
   # 멈춤(Q1). 온디맨드 3대 고정 노드로 이전(CNPG가 쓰는 것과 동일한 조합).
+  # 첫 번째는 인프라 설정(배치·Server-Side Diff), 두 번째는 알림 설정. Helm은 목록 순서대로
+  # 값을 깊게 병합하므로 같은 notifications 키를 나눠 써도 둘 다 반영된다.
   values = [<<-EOT
     # OutOfSync 3건(cloudnativepg-cluster·nats·api-module-db-secret) 원인
     # 조사(2026-10-15) 중 발견 — 오늘 고친 HTTPRoute 2건·LoadBalancerConfiguration
@@ -201,6 +264,7 @@ resource "helm_release" "argocd" {
           value: stateful
           effect: NoSchedule
   EOT
+    , local.argocd_values # 알림(Discord) 설정 — 위 values에 깊게 병합된다
   ]
 }
 
