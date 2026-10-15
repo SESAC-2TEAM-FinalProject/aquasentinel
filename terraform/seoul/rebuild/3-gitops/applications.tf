@@ -277,6 +277,28 @@ locals {
           value: stateful
           effect: NoSchedule
 
+    # loki-canary(DaemonSet) — 서비스 배치 최종 제안(2026-10-15) 부록 A에서
+    # fluent-bit·chaos-daemon과 나란히 "DESIRED 2(누락)"로 적혀 있었는데 7장
+    # 단계 1-b 작업 항목엔 앞의 둘만 들어가 있어 이것만 남아 있었다(2026-10-15
+    # 단계 0~5 완료 후 전수 대조에서 발견). 단계 3으로 핵심 22개가 전부
+    # 온디맨드 3대로 옮겨간 지금, 정작 그 노드들의 로그 전달을 검증하는
+    # 카나리아가 없는 상태였다. toleration은 fluent-bit·node-exporter와
+    # 동일하게 operator: Exists로 건다 — 앞으로 taint가 붙는 노드풀이 생겨도
+    # 카나리아가 자동으로 따라가야 의미가 있다.
+    #
+    # resources는 toleration과 같이 넣는다. 이걸 빼면 온디맨드 노드에서 유일한
+    # BestEffort 파드가 돼 메모리 압박 시 축출 1순위가 되는데, 정작 그때가
+    # 로그 전달 검증이 가장 필요한 시점이라 자기모순이다(6장 ② 논리와 동일).
+    # 보유 데이터 P95: CPU 1.5m · 메모리 15.1Mi.
+    lokiCanary:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      resources:
+        requests:
+          cpu: 5m
+          memory: 20Mi
+
     serviceAccount:
       create: false
       name: loki
