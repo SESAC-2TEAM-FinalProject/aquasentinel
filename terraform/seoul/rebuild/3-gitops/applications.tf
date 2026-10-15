@@ -260,6 +260,12 @@ locals {
       persistence:
         size: 10Gi
         storageClass: gp2
+      # 서비스 배치 최종 제안(2026-10-15) 7장 단계 2 — requests 없는 BestEffort.
+      # 보유 데이터(~46시간) P95 기준 산정.
+      resources:
+        requests:
+          cpu: 25m
+          memory: 230Mi
 
     serviceAccount:
       create: false
@@ -336,12 +342,29 @@ locals {
     grafana:
       enabled: false
 
+    # 서비스 배치 최종 제안(2026-10-15) 7장 단계 2 — 메모리 200Mi는 이미
+    # Prometheus Operator가 CR에 resources 설정이 없을 때 적용하는 암묵적
+    # 기본값으로 들어가 있던 것(Alertmanager CR 자체엔 비어 있었음, 2026-10-15
+    # 확인) — CPU만 비어 있어서 추가. resources를 명시하면 그 암묵적 기본값이
+    # 사라지므로 memory도 기존값(200Mi)을 그대로 같이 적어 유지한다.
+    alertmanager:
+      alertmanagerSpec:
+        resources:
+          requests:
+            cpu: 5m
+            memory: 200Mi
+
     prometheus:
       serviceAccount:
         annotations:
           eks.amazonaws.com/role-arn: "${data.terraform_remote_state.cluster.outputs.thanos_role_arn}"
 
       prometheusSpec:
+        resources:
+          requests:
+            cpu: 60m
+            memory: 950Mi
+
         # 서비스 배치 최종 제안(2026-10-15) 9장 안건 5 — requests 산정 기준으로
         # "Prometheus 2주치 P95"를 쓰기로 했는데 retention이 2d라 애초에 2주치가
         # 쌓일 수 없었다. 지금 당장의 산정은 보유된 ~2일치로 하되(아래 참고),

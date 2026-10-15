@@ -93,6 +93,49 @@ resource "helm_release" "argocd" {
   version          = "10.9.2"
   namespace        = "argocd"
   create_namespace = true
+
+  # 서비스 배치 최종 제안(2026-10-15) 1장 ③, 6장 ②, 7장 단계 2 — 전부 requests
+  # 없는 BestEffort라 메모리 압박 시 축출 1순위다. Prometheus 2주치 P95(실측
+  # 당시 보유 데이터는 ~46시간) 기준으로 산정, CPU는 5m 단위·메모리는 P95보다
+  # 약간 위로 올림.
+  values = [<<-EOT
+    controller:
+      resources:
+        requests:
+          cpu: 75m
+          memory: 670Mi
+    dex:
+      resources:
+        requests:
+          cpu: 5m
+          memory: 50Mi
+    redis:
+      resources:
+        requests:
+          cpu: 5m
+          memory: 30Mi
+    server:
+      resources:
+        requests:
+          cpu: 5m
+          memory: 40Mi
+    repoServer:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 180Mi
+    applicationSet:
+      resources:
+        requests:
+          cpu: 5m
+          memory: 30Mi
+    notifications:
+      resources:
+        requests:
+          cpu: 5m
+          memory: 30Mi
+  EOT
+  ]
 }
 
 # Argo CD가 private 레포를 clone할 때 쓰는 자격증명.
