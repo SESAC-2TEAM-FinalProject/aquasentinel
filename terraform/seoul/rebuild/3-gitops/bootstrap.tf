@@ -292,34 +292,28 @@ resource "kubernetes_secret_v1" "thanos_objstore_config" {
 }
 
 # ---------------------------------------------------------------------------
-# GitLab Runner(EKS 자체 러너, api-module/web/gitops 레포 CI용) 잡 파드
-# ServiceAccount — IRSA role 생성 자체는 2-cluster(D2)에서 한다. 러너
-# 매니저 파드 자신은 이 SA를 쓰지 않는다(차트 기본 SA로 충분 — 잡 파드를
-# 띄우는 RBAC만 있으면 됨). 이 SA는 실제 빌드를 실행하는 잡 파드 전용이고,
-# .gitlab-ci.yml 쪽에서 KUBERNETES_SERVICE_ACCOUNT_OVERWRITE로 지정하거나
-# Runner 설정(config.toml)의 기본 service_account로 건다. 도쿄는 CI가
-# 돌지 않으므로 이 러너 자체가 필요 없다(서울 전용).
+# (2026-10-15 제거) 클러스터 내부 GitLab Runner용 네임스페이스와 잡 파드
+# ServiceAccount가 여기 있었다. 러너가 EC2로 이전 완료돼 gitops에서 앱을
+# 제거하고(gitops 커밋 a054fdd) 네임스페이스까지 삭제했는데, 이 Terraform
+# 리소스를 같이 치우지 않아 **3-gitops plan이 누구 MR이든 전부 실패**했다
+# (재희님 보고, 2026-10-15). EC2 러너는 Docker executor라 이 SA/IRSA를
+# 쓰지 않으므로 복구가 아니라 제거가 맞다.
+#
+# 코드만 지워서는 안 끝났다 — kubernetes provider ~> 3.0은 이미 사라진
+# 리소스를 읽을 때 상태에서 조용히 지우는 대신 "Missing Resource Identity
+# After Read" 오류를 내고 plan 단계를 통째로 중단시킨다(provider 결함).
+# 그래서 `terraform state rm`으로 상태에서도 뺐다(실제 리소스는 이미 없으니
+# 인프라 영향 없음). 같은 상황이 또 생기면 코드 삭제 + state rm을 함께
+# 해야 한다.
+#
+# 2-cluster의 IRSA 역할(gitlab_runner_build_role_arn)은 여기서 같이 지우지
+# 않는다 — 이 참조가 사라진 뒤에야 2-cluster의 output·역할을 지울 수 있어
+# 순서가 갈린다(별도 MR).
 # ---------------------------------------------------------------------------
-
-resource "kubernetes_namespace_v1" "gitlab_runner" {
-  metadata {
-    name = "gitlab-runner"
-  }
-}
-
-resource "kubernetes_service_account_v1" "gitlab_runner_build" {
-  metadata {
-    name      = "gitlab-runner-build"
-    namespace = kubernetes_namespace_v1.gitlab_runner.metadata[0].name
-    annotations = {
-      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.cluster.outputs.gitlab_runner_build_role_arn
-    }
-  }
-}
 
 # ---------------------------------------------------------------------------
 # 카펜터(Karpenter) 컨트롤러 ServiceAccount — 가용성/DR 재구축 개선안(2026-10-13)
-# 2단계. kube-system은 EKS가 기본 생성하는 네임스페이스라 gitlab-runner와 달리
+# 2단계. kube-system은 EKS가 기본 생성하는 네임스페이스라 별도
 # kubernetes_namespace_v1이 필요 없다. 이름(karpenter)은 2-cluster/karpenter.tf의
 # module.karpenter_irsa.namespace_service_accounts = ["kube-system:karpenter"]와
 # 반드시 일치해야 IRSA 신뢰조건(sub)이 맞는다.
