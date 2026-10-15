@@ -7,10 +7,16 @@
 # 된다. ECR 정책도 seoul/rebuild/2-cluster/irsa.tf의 gitlab_runner_ecr과
 # 내용은 같지만 독립적으로 새로 작성한다.
 #
-# 이 러너는 kubectl/helm을 쓰지 않는다(배포는 Argo CD GitOps 방식 — CI는
-# 빌드 + ECR push + gitops 레포 커밋까지만 함, api-module/.gitlab-ci.yml
-# 실측 확인). 그래서 EKS Access Entry도, 클러스터 보안그룹 연결도 필요 없고
-# IAM 권한은 ECR push/pull 하나면 충분하다.
+# [2026-10-15 정정] 아래 전제가 반만 맞았다 — "이 러너는 kubectl/helm을
+# 쓰지 않는다"는 web·api-module 등 앱 레포 CI 잡 기준의 실측이었는데,
+# 정작 이 AWS 레포 자신의 3-gitops 컴포넌트는 kubernetes·helm Terraform
+# 프로바이더로 EKS API 서버에 직접 TCP 연결한다(3-gitops/main.tf 참고).
+# 이전 직후엔 3-gitops plan을 이 러너로 돌려본 적이 없어 늦게 발견했다
+# (plan:seoul [rebuild/3-gitops]가 "dial tcp ...:443: i/o timeout"으로
+# 실패 — 클러스터 SG가 러너 SG의 inbound를 허용하지 않아서였다).
+# 그래서 위 "state를 읽지 않는다" 원칙에 scoped 예외를 둔다 — 클러스터
+# SG ID 하나만 읽어 인그레스 규칙 1개를 추가한다(아래 "EKS API 접근"
+# 섹션). 그 외 EKS Access Entry 등은 여전히 불필요하다는 판단 그대로다.
 #
 # 최초 apply는 아직 이 EC2(미래의 새 러너)가 존재하지 않는 시점이라 기존
 # 클러스터 내부 러너 또는 로컬에서 실행해야 한다 — global/bootstrap·
@@ -48,6 +54,18 @@ data "terraform_remote_state" "network" {
   config = {
     bucket = var.tfstate_bucket
     key    = "seoul/rebuild/1-network/terraform.tfstate"
+    region = var.tfstate_bucket_region
+  }
+}
+
+# [2026-10-15 추가] 위 헤더 주석의 scoped 예외 — 클러스터 SG ID를 읽는
+# 용도로만 쓴다. 2-cluster의 다른 출력(인스턴스 타입 등)은 참조하지 않는다.
+data "terraform_remote_state" "cluster" {
+  backend = "s3"
+
+  config = {
+    bucket = var.tfstate_bucket
+    key    = "seoul/rebuild/2-cluster/terraform.tfstate"
     region = var.tfstate_bucket_region
   }
 }
@@ -171,6 +189,29 @@ resource "aws_security_group" "runner" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# ---------------------------------------------------------------------------
+# EKS API 접근 — 2026-10-15 추가. 3-gitops Terraform 컴포넌트가 kubernetes·
+# helm 프로바이더로 EKS API 서버에 직접 TCP 443 연결을 시도하는데, 클러스터
+# 보안그룹(EKS가 자동 생성·관리)이 기본적으로 자기 자신과 LBC 타겟그룹
+# 바인딩만 허용해 러너 SG는 막혀 있었다(plan:seoul [rebuild/3-gitops]가
+# "dial tcp ...:443: i/o timeout"으로 실패 — 10/14 러너 이전 때는 발견하지
+# 못했다, 위 헤더 주석 정정 참고).
+#
+# 클러스터 SG 자체는 2-cluster/modules/aws-eks가 관리하므로 여기서는 그
+# 리소스를 건드리지 않고 별도 aws_vpc_security_group_ingress_rule로 규칙만
+# 하나 추가한다 — AWS는 같은 SG에 여러 Terraform 컴포넌트가 각자 규칙을
+# 추가하는 걸 허용하므로 2-cluster state에 영향이 없다(CNPG·NATS 무관).
+# ---------------------------------------------------------------------------
+
+resource "aws_vpc_security_group_ingress_rule" "runner_to_cluster_api" {
+  security_group_id            = data.terraform_remote_state.cluster.outputs.cluster_security_group_id
+  referenced_security_group_id = aws_security_group.runner.id
+  from_port                    = 443
+  to_port                      = 443
+  ip_protocol                  = "tcp"
+  description                  = "gitlab-runner-ec2 needs K8s API for 3-gitops kubernetes/helm providers"
 }
 
 # ---------------------------------------------------------------------------
