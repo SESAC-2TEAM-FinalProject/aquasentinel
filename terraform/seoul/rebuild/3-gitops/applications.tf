@@ -255,6 +255,15 @@ locals {
               prefix: index_
               period: 24h
 
+    # loki-canary 커버리지 점검(2026-10-15, 단계 0~5 완료 후 전수 대조) 중
+    # 발견 — ServiceMonitor가 아예 없어 Loki 본체·loki-canary 지표가 전부
+    # Prometheus에 안 들어오고 있었다. 하나의 ServiceMonitor가 label
+    # app.kubernetes.io/name=loki로 Loki Service와 loki-canary Service를
+    # 동시에 선택한다(helm template으로 실측 확인) — 별도 토글 불필요.
+    monitoring:
+      serviceMonitor:
+        enabled: true
+
     singleBinary:
       replicas: 1
       persistence:
