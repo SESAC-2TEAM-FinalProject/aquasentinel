@@ -371,6 +371,26 @@ locals {
     grafana:
       enabled: false
 
+    # EKS는 컨트롤플레인(scheduler·controller-manager·etcd)을 AWS가 관리해서
+    # 지표를 수집할 수 없다 — 켜 두면 KubeSchedulerDown·KubeControllerManagerDown이
+    # 영원히 발화한다(2026-10-14 라이브 확인). 수집 대상·규칙·대시보드를 함께 끈다.
+    kubeScheduler:
+      enabled: false
+    kubeControllerManager:
+      enabled: false
+    kubeEtcd:
+      enabled: false
+
+    alertmanager:
+      alertmanagerSpec:
+        # 기본값(OnNamespace)이면 AlertmanagerConfig가 자기 네임스페이스 알림만
+        # 받는다 — monitoring에 둔 라우팅 트리(gitops manifests/alerting)가 web·
+        # api-module·aquasentinel-db·nats 알림과, 네임스페이스 라벨이 없는 노드
+        # 알림·Watchdog을 못 받는다(2026-10-14 라이브 확인). 클러스터가 하나뿐이라
+        # 아래 prometheusSpec의 셀렉터 전체 매칭과 같은 이유로 제한을 끈다.
+        alertmanagerConfigMatcherStrategy:
+          type: None
+
     prometheus:
       serviceAccount:
         annotations:
