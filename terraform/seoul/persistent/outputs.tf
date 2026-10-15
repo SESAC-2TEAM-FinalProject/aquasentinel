@@ -33,3 +33,13 @@ output "domain_name" {
 output "zone_id" {
   value = module.dns.zone_id
 }
+
+output "alerts_global_topic_arn" {
+  description = "us-east-1 SNS 토픽 — Route53 헬스체크 알람용(4-edge가 읽는다)."
+  value       = aws_sns_topic.alerts_global.arn
+}
+
+output "alerts_regional_topic_arn" {
+  description = "서울 SNS 토픽 — 서울 리전 지표 알람용(ACM 만료 등)."
+  value       = aws_sns_topic.alerts_regional.arn
+}

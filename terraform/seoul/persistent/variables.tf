@@ -53,3 +53,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "alarm_email_endpoints" {
+  description = "트랙 B 알람(SNS) 이메일 수신자. CI 변수 TF_VAR_alarm_email_endpoints로 넣는다(예: [\"a@example.com\"]). 비우면 구독 없이 토픽만 만든다. 구독 후 각 수신자가 확인 메일을 눌러야 메일이 온다."
+  type        = list(string)
+  default     = []
+}
