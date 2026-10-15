@@ -69,3 +69,14 @@ variable "replication_destination_region" {
   type        = string
   default     = ""
 }
+
+variable "pull_only_account_ids" {
+  description = "이미지를 받기만(pull) 할 수 있게 허용할 다른 AWS 계정 ID 목록 — 시험 구역 등. 비우면 저장소 정책을 만들지 않는다."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.pull_only_account_ids : can(regex("^[0-9]{12}$", id))])
+    error_message = "계정 ID 는 숫자 12자리여야 한다."
+  }
+}
