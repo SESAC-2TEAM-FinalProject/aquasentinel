@@ -105,8 +105,9 @@ resource "kubernetes_manifest" "karpenter_ec2nodeclass_default" {
 }
 
 # ---------------------------------------------------------------------------
-# NodePool "general" — 앱·수집기 등 무상태 워크로드. 전부 스팟(기존과 동일한
-# 비용 프로필 유지).
+# NodePool "general" — 앱·수집기 등 무상태 워크로드. 전부 스팟(비용 프로필
+# 유지, t3.large 한 유형 → 2vCPU/8GiB 급 5종으로 다변화. 2026-10-15, 서비스
+# 배치 최종 제안 1장 ②·6장 ③ — 한 유형이 통째로 회수돼도 나머지가 살아남는다).
 # ---------------------------------------------------------------------------
 
 resource "kubernetes_manifest" "karpenter_nodepool_general" {
@@ -133,7 +134,7 @@ resource "kubernetes_manifest" "karpenter_nodepool_general" {
             {
               key      = "node.kubernetes.io/instance-type"
               operator = "In"
-              values   = data.terraform_remote_state.cluster.outputs.node_instance_types
+              values   = data.terraform_remote_state.cluster.outputs.general_pool_instance_types
             },
             {
               key      = "karpenter.sh/capacity-type"
@@ -146,6 +147,12 @@ resource "kubernetes_manifest" "karpenter_nodepool_general" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         consolidateAfter    = "1m"
+      }
+      # 서비스 배치 최종 제안(2026-10-15) 6장 ③ — 상한 없으면 설정 실수·폭주 시
+      # 무제한 증식. 현재 예약량(5장)의 몇 배 여유를 둔 값.
+      limits = {
+        cpu    = "32"
+        memory = "128Gi"
       }
     }
   }

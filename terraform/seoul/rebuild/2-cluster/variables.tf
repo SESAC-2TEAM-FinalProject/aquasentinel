@@ -55,6 +55,17 @@ variable "node_instance_types" {
   default = ["t3.large"]
 }
 
+# 2026-10-15 — 서비스 배치 최종 제안(1장 ②, 6장 ③) 단계 1-a: 카펜터 general
+# 풀(스팟, 무상태 워크로드)이 t3.large 한 가지뿐이라 그 유형이 한꺼번에 회수되면
+# 전멸한다. node_instance_types(위)와 일부러 분리한다 — 그건 스테이트풀 전용
+# 고정 온디맨드 3대에 쓰이는 값이라, 같이 묶으면 이 다변화가 의도치 않게
+# 그 고정 그룹에도 적용된다. 같은 2vCPU/8GiB 급으로만 골라 워크로드 요청값
+# 가정이 깨지지 않게 한다.
+variable "general_pool_instance_types" {
+  type    = list(string)
+  default = ["t3.large", "t3a.large", "m5.large", "m5a.large", "m6i.large"]
+}
+
 # 2026-10-14 — 스테이트풀(CNPG·NATS) 복귀 작업. 팀결정요청 "결정 2" 확정(①
 # 온디맨드): 스팟 보호장치 3종 중 2개(do-not-disrupt, 인터럽션 큐)가 카펜터
 # 전용 기능이라 관리형 노드그룹으로 옮기면 적용이 안 됨 — 온디맨드로 바꿔서

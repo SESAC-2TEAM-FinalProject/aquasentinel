@@ -85,6 +85,12 @@ output "node_instance_types" {
   value = var.node_instance_types
 }
 
+# general NodePool(카펜터 스팟) 전용 — 위 node_instance_types와 분리한 이유는
+# variables.tf의 general_pool_instance_types 주석 참고.
+output "general_pool_instance_types" {
+  value = var.general_pool_instance_types
+}
+
 output "max_pods_per_node" {
   value = var.max_pods_per_node
 }
