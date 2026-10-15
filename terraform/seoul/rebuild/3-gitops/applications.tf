@@ -373,6 +373,20 @@ locals {
             value: stateful
             effect: NoSchedule
 
+        # 서비스 배치 최종 제안(2026-10-15) 1장 ⑤, 7장 단계 5 — 지금까지
+        # emptyDir라 파드가 재배치될 때마다 Silence(알림 일시중지) 설정이
+        # 사라졌다. EBS PVC를 붙여 영속화. 실측 사용량은 0(활성 Silence
+        # 없음)이지만 gp2 최소 단위가 1Gi라 그대로 사용 — Silence·알림
+        # 로그는 수십~수백 KB 수준이라 여유는 충분하다.
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: gp2
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 1Gi
+
     prometheus:
       serviceAccount:
         annotations:
