@@ -33,12 +33,30 @@ provider "aws" {
   }
 }
 
+# Route53 헬스체크 지표(AWS/Route53 HealthCheckStatus)는 us-east-1에만 쌓인다.
+# 그 알람용 SNS 토픽도 같은 리전에 있어야 CloudWatch 알람이 게시할 수 있다.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      project     = var.project_name
+      owner       = var.owner
+      environment = var.environment
+      managed_by  = "terraform"
+      component   = "persistent"
+    }
+  }
+}
+
 locals {
   # thanos/cloudnativepg가 같은 observability 버킷을 prefix로 나눠 공유한다 —
   # 2-cluster의 IRSA 정책이 이 prefix로 접근 범위를 좁히므로 여기서 output해
   # 단일 소스로 둔다(aws-observability-storage 모듈 시절 local.workloads[*].prefix와 동일한 값).
   thanos_prefix        = "thanos/"
   cloudnativepg_prefix = "cloudnativepg/"
+  name_prefix          = "${var.project_name}-${var.environment}"
 }
 
 data "terraform_remote_state" "tokyo_persistent" {
