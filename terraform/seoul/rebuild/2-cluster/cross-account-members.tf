@@ -112,3 +112,28 @@ resource "aws_iam_role_policy" "alarm_pipeline_readonly" {
     ]
   })
 }
+
+# 웹 파트 요청(2026-10-15, 창영님) — ECR 이미지가 올라갔는지, ALB 가중치 규칙이
+# 의도대로 됐는지(Argo Rollouts 카나리 확인용) 파이프라인 화면 없이 직접 조회하기
+# 위한 읽기 전용 권한. changyoung 롤은 이 레포 소유가 아니라(위 참고) 이름
+# 문자열만 참조한다.
+resource "aws_iam_role_policy" "web_read_access" {
+  name = "web-read-access"
+  role = "${var.project_name}-member-changyoung"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "WebReadAccess"
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeImages",
+          "ecr:ListImages",
+          "elasticloadbalancing:Describe*",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
