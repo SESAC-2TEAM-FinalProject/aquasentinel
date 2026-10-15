@@ -82,8 +82,5 @@ resource "kubernetes_manifest" "root_app" {
   depends_on = [helm_release.argocd]
 }
 
-# 이미 kubectl 로 떠 있는 서울 root 를 지우지 않고 state 로 가져온다(도쿄는 아직 root 가 없어 import 없음)
-import {
-  to = kubernetes_manifest.root_app
-  id = "apiVersion=argoproj.io/v1alpha1,kind=Application,namespace=argocd,name=root"
-}
+# (10-14 서울 root 는 import 블록으로 state 에 가져왔고, 끝난 뒤 블록을 지웠다 — 남겨 두면 root 가 없는
+#  새 클러스터(재구축 · 시험 구역)에서 "가져올 대상이 없다"로 plan 이 실패한다.)
