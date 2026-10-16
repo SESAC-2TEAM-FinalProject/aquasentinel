@@ -333,8 +333,10 @@ resource "kubernetes_service_account_v1" "loki" {
 }
 
 # 웹팀 요청(2026-10-16) — Grafana CloudWatch 데이터소스용 IRSA. 차트가 기본으로
-# 만드는 SA 이름이 이미 "grafana"라 이 이름을 그대로 쓰고 apps/grafana에서
-# serviceAccount.create: false로 전환한다(loki와 같은 패턴).
+# 만드는 SA 이름이 이미 "grafana"라 이 이름을 그대로 쓰고
+# kubernetes_manifest.grafana_app(applications.tf)에서 serviceAccount.create:
+# false로 전환한다(loki와 같은 패턴) — grafana Application 자체를 Terraform이
+# 소유하는 이유는 applications.tf의 grafana_app 주석 참고(2026-10-16 저녁 사고).
 resource "kubernetes_service_account_v1" "grafana" {
   metadata {
     name      = "grafana"
@@ -343,6 +345,17 @@ resource "kubernetes_service_account_v1" "grafana" {
       "eks.amazonaws.com/role-arn" = data.terraform_remote_state.cluster.outputs.grafana_cloudwatch_role_arn
     }
   }
+}
+
+# grafana Application을 git에서 지우는 MR이 먼저 머지되면서, 그 Application이
+# 만들었던 차트 기본 SA가 고아로 남았다(Application엔 cascade 삭제 finalizer가
+# 없어 prune돼도 하위 리소스는 안 지워짐 — root.tf의 과거 root import와 같은
+# 이유). create 대신 가져와서 annotation만 갱신한다. (적용 끝나면 root import와
+# 같은 방식으로 이 블록을 지운다 — 남겨두면 이 SA가 없는 새 클러스터에서
+# "가져올 대상이 없다"로 plan이 실패한다.)
+import {
+  to = kubernetes_service_account_v1.grafana
+  id = "monitoring/grafana"
 }
 
 # Thanos(Prometheus 사이드카)의 오브젝트 스토리지 설정 — 버킷/엔드포인트/리전을
