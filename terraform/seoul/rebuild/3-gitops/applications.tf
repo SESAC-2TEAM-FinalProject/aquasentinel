@@ -241,6 +241,26 @@ locals {
         },
       ]
     }
+    # 시험구역 관측 대시보드 보강(2026-10-16) — redis_exporter가 긁을 ElastiCache
+    # 엔드포인트. 리전·계정마다 달라서(2-cluster 모듈 출력) Terraform이 주입한다.
+    # 인증 토큰 미사용(AuthTokenEnabled=false, 2026-10-16 확인)이라 시크릿이
+    # 아니라 ConfigMap 패치로 충분하다.
+    "redis-exporter" = {
+      path      = "manifests/redis-exporter"
+      namespace = "monitoring"
+      patches = [
+        {
+          target = { kind = "ConfigMap", name = "redis-exporter-config" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/data/REDIS_ADDR"
+              value = "redis://${data.terraform_remote_state.cluster.outputs.redis_endpoint}:6379"
+            }
+          ])
+        },
+      ]
+    }
   }
 }
 
@@ -745,19 +765,29 @@ resource "kubernetes_manifest" "karpenter_app" {
     spec = {
       project = "default"
 
-      source = {
-        # OCI 소스는 다른 Application들과 필드 구성이 다르다 — repoURL엔 레지스트리까지만
-        # 넣고(oci:// 접두사 없이), 차트 이름은 chart 필드로 분리해야 한다. repoURL에
-        # 차트 경로까지 합쳐 넣었다가 "spec.source.repoURL and either spec.source.path
-        # or spec.source.chart are required" InvalidSpecError로 처음 실패했다
-        # (2026-10-14, ArgoCD 공식 Helm OCI 문서로 교차 확인 후 수정).
-        repoURL        = "public.ecr.aws/karpenter"
-        chart          = "karpenter"
-        targetRevision = "1.0.8" # EKS 1.31 지원 최소 버전(1.0.5) 이후의 패치 릴리스
-        helm = {
-          values = local.karpenter_values
-        }
-      }
+      sources = [
+        {
+          # OCI 소스는 다른 Application들과 필드 구성이 다르다 — repoURL엔 레지스트리까지만
+          # 넣고(oci:// 접두사 없이), 차트 이름은 chart 필드로 분리해야 한다. repoURL에
+          # 차트 경로까지 합쳐 넣었다가 "spec.source.repoURL and either spec.source.path
+          # or spec.source.chart are required" InvalidSpecError로 처음 실패했다
+          # (2026-10-14, ArgoCD 공식 Helm OCI 문서로 교차 확인 후 수정).
+          repoURL        = "public.ecr.aws/karpenter"
+          chart          = "karpenter"
+          targetRevision = "1.0.8" # EKS 1.31 지원 최소 버전(1.0.5) 이후의 패치 릴리스
+          helm = {
+            values = local.karpenter_values
+          }
+        },
+        # 시험구역 관측 대시보드 보강(2026-10-16) — ServiceMonitor. Loki와 달리
+        # OCI Helm 소스도 git 경로와 다중 소스로 묶을 수 있어(ArgoCD 멀티소스),
+        # 별도 Application 없이 여기 2번째 소스로 추가.
+        {
+          repoURL        = local.gitops_repo_url
+          targetRevision = var.gitops_revision
+          path           = "manifests/karpenter"
+        },
+      ]
 
       destination = {
         server    = "https://kubernetes.default.svc"
