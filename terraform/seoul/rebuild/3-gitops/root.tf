@@ -1,7 +1,8 @@
 # root Application(app-of-apps)을 Terraform 이 만든다 — GitOps 저장소 주소 일원화 안 A.
 # 저장소 주소(local.gitops_repo_url) · 브랜치(var.gitops_revision)가 여기 한 곳에서 정해져,
-# root 가 apps/ 를 Kustomize 로 읽으며 하위 앱 12개(라벨 aquasentinel.io/gitops-source 11개 + grafana 두 번째 소스)의
-# repoURL · targetRevision 을 패치로 덮어쓴다. 시험 구역 · 도쿄 · 브랜치 미리보기는 변수만 바꾸면 된다.
+# root 가 apps/ 를 Kustomize 로 읽으며 라벨 aquasentinel.io/gitops-source=true 가 붙은 하위 앱들의
+# repoURL · targetRevision 을 패치로 덮어쓴다(grafana는 2026-10-16부터 apps/에 없음 — kubernetes_manifest.grafana_app
+# 참고). 시험 구역 · 도쿄 · 브랜치 미리보기는 변수만 바꾸면 된다.
 # 예전엔 root 를 이 컴포넌트와 gitops bootstrap/root-app.yaml 두 곳에서 손으로 맞춰야 해서 뺐는데,
 # 이번엔 root-app.yaml 을 지워 이 파일 하나만 원본으로 남긴다.
 # root 에는 삭제 연쇄 설정(resources-finalizer)이 있어 지웠다 다시 만들면 하위 앱이 전부 지워졌다 다시 생긴다 —
@@ -28,13 +29,6 @@ resource "kubernetes_manifest" "root_app" {
               patch = jsonencode([
                 { op = "replace", path = "/spec/source/repoURL", value = local.gitops_repo_url },
                 { op = "replace", path = "/spec/source/targetRevision", value = var.gitops_revision },
-              ])
-            },
-            {
-              target = { kind = "Application", name = "grafana" }
-              patch = jsonencode([
-                { op = "replace", path = "/spec/sources/1/repoURL", value = local.gitops_repo_url },
-                { op = "replace", path = "/spec/sources/1/targetRevision", value = var.gitops_revision },
               ])
             },
             # 원천 저장소 버킷 — 버킷 이름에 계정 ID 가 들어 있어 환경마다 다르다(gitops root-app.yaml 의 같은 패치를 옮겨 옴)

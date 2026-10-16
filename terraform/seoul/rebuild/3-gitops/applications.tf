@@ -810,6 +810,161 @@ resource "kubernetes_manifest" "karpenter_app" {
   depends_on = [helm_release.argocd, kubernetes_service_account_v1.karpenter]
 }
 
+# Grafana — 2026-10-16 저녁, "SA 미리 만들고 serviceAccount.create:false"(1번
+# 방식, bootstrap.tf의 kubernetes_service_account_v1.grafana)만 쓰려다 사고가
+# 남: grafana Application이 apps/의 git 파일이라, 이 레포(SA 생성)와 gitops
+# 레포(차트 설정)가 서로 다른 MR·저장소라 "SA가 먼저 생긴다"를 depends_on으로
+# 강제 못 했다. gitops MR이 먼저 머지되자 Argo CD가 차트 기본 SA를 prune하고
+# deploymentStrategy: Recreate라 옛 파드까지 내려가 Grafana가 완전히 다운됨
+# (핫픽스로 임시 복구). Loki·karpenter와 같은 3번 방식(Application 전체 소유)
+# 으로 옮겨 SA 생성과 Application 생성을 같은 apply 그래프에 둔다 — 두 번째
+# 소스(대시보드 git kustomize 경로)는 karpenter와 같은 멀티소스로 유지.
+locals {
+  grafana_values = <<-EOT
+    admin:
+      existingSecret: grafana-admin-credentials
+      userKey: admin-user
+      passwordKey: admin-password
+
+    persistence:
+      enabled: true
+      storageClassName: gp2
+      size: 5Gi
+
+    # 2026-10-15 단계 3 적용 중 실측 발견 — replicas 1 + RWO PVC에 기본
+    # RollingUpdate(maxSurge=1, maxUnavailable=0)가 걸려 있으면 새 파드가
+    # 뜨기 전에 옛 파드가 안 내려가 "Multi-Attach error" Pending으로
+    # 영구 멈춘다. 옛 파드를 먼저 내리는 Recreate로 바꿔 근본 해결.
+    deploymentStrategy:
+      type: Recreate
+
+    resources:
+      requests:
+        cpu: 5m
+        memory: 170Mi
+
+    nodeSelector:
+      aquasentinel.io/nodepool: stateful
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: stateful
+        effect: NoSchedule
+
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        labelValue: "1"
+        searchNamespace: monitoring
+
+    # 도메인·OIDC 클라이언트 시크릿은 리전별로 달라서 grafana-secret
+    # Application(Terraform 소유)이 만드는 ConfigMap/Secret을 이름으로
+    # 참조한다.
+    envFromConfigMaps:
+      - name: grafana-oidc-config
+    envFromSecrets:
+      - name: grafana-oidc-client-secret
+
+    # 웹팀 요청(2026-10-16) — Postgres 읽기 전용 데이터소스용 자격증명.
+    envValueFrom:
+      GRAFANA_PG_RO_USER:
+        secretKeyRef:
+          name: grafana-db-ro-credentials
+          key: username
+      GRAFANA_PG_RO_PASSWORD:
+        secretKeyRef:
+          name: grafana-db-ro-credentials
+          key: password
+
+    serviceAccount:
+      create: false
+      name: grafana
+
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+            access: proxy
+            isDefault: true
+          - name: Loki
+            type: loki
+            url: http://loki.monitoring.svc.cluster.local:3100
+            access: proxy
+          - name: PostgreSQL (읽기 전용)
+            type: postgres
+            url: aquasentinel-pg-ro.aquasentinel-db.svc.cluster.local:5432
+            database: app
+            user: $GRAFANA_PG_RO_USER
+            access: proxy
+            jsonData:
+              sslmode: require
+              postgresVersion: 1700
+            secureJsonData:
+              password: $GRAFANA_PG_RO_PASSWORD
+          # 웹팀 요청(2026-10-16) — CloudWatch. authType: default는 AWS SDK
+          # 기본 자격증명 체인을 써서 IRSA를 자동으로 줍는다. Route53
+          # 헬스체크 지표는 us-east-1 전용이라 쿼리에서 리전을 직접
+          # 선택해야 한다(기본 리전은 ap-northeast-2).
+          - name: CloudWatch
+            type: cloudwatch
+            jsonData:
+              authType: default
+              defaultRegion: ap-northeast-2
+  EOT
+}
+
+resource "kubernetes_manifest" "grafana_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "grafana"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      sources = [
+        {
+          repoURL        = "https://grafana.github.io/helm-charts"
+          chart          = "grafana"
+          targetRevision = "10.5.15"
+          helm = {
+            values = local.grafana_values
+          }
+        },
+        {
+          repoURL        = local.gitops_repo_url
+          targetRevision = var.gitops_revision
+          path           = "manifests/grafana/dashboards"
+        },
+      ]
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd, kubernetes_service_account_v1.grafana]
+}
+
 # LBC + Gateway API CRD 부트스트랩 경쟁 조건(2026-10-02 서울 재기동 때 재현
 # 확인) — LBC는 프로세스 시작 시 딱 한 번만 Gateway API CRD 존재 여부를
 # 확인하고 이후 재확인하지 않는다. Argo CD가 aws-load-balancer-controller와
