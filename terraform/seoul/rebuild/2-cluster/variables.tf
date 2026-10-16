@@ -183,6 +183,16 @@ variable "loki_service_account_name" {
   default = "loki"
 }
 
+variable "grafana_namespace" {
+  type    = string
+  default = "monitoring"
+}
+
+variable "grafana_service_account_name" {
+  type    = string
+  default = "grafana"
+}
+
 variable "cloudnativepg_namespace" {
   type    = string
   default = "aquasentinel-db"
