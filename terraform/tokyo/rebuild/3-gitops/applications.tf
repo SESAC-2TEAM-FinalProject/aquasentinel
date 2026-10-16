@@ -308,6 +308,17 @@ locals {
             }
           ])
         },
+        # 상태조회 캐시 주소(2026-10-16) — 서울과 같게 이 리전 ElastiCache 기본 엔드포인트를 넣는다
+        {
+          target = { kind = "ConfigMap", name = "aquasentinel-web" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/data/CACHE_ENDPOINT"
+              value = data.terraform_remote_state.cluster.outputs.redis_endpoint
+            }
+          ])
+        },
       ]
     }
   }

@@ -229,6 +229,9 @@ locals {
         },
         # 로그인 토큰 발급자 주소 — keycloak 패치와 같은 auth 서브도메인. 서울은 git 값과 같고,
         # 시험 구역은 그 구역 도메인의 로그인 서버를 보게 된다.
+        # 상태조회 캐시 주소(2026-10-16) — ElastiCache 기본 엔드포인트(장애 조치 때도 같은 주소).
+        # git 값은 빈 문자열(캐시 없이 DB)이라, 주소가 계정 · 리전마다 다른 이 값을 여기서 넣는다.
+        # 인증 토큰 · TLS 미사용(redis-exporter 패치와 같은 확인) — status-svc 는 평문 연결.
         {
           target = { kind = "ConfigMap", name = "aquasentinel-web" }
           patch = jsonencode([
@@ -236,6 +239,11 @@ locals {
               op    = "replace"
               path  = "/data/OIDC_ISSUER"
               value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel"
+            },
+            {
+              op    = "replace"
+              path  = "/data/CACHE_ENDPOINT"
+              value = data.terraform_remote_state.cluster.outputs.redis_endpoint
             }
           ])
         },
