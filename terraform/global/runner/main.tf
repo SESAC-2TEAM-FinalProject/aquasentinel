@@ -241,7 +241,11 @@ resource "aws_launch_template" "runner" {
   }
 
   metadata_options {
-    http_tokens = "required" # IMDSv2 강제
+    http_tokens                 = "required" # IMDSv2 강제
+    http_put_response_hop_limit = 2          # 기본값 1은 컨테이너(Docker 브리지 네트워크 홉 1개 추가)에서
+    # IMDS에 못 닿는다 — Kaniko가 ECR push 인증을 인스턴스 프로파일에서 자동으로
+    # 가져오려면(api-module Kaniko 전환, 2026-10-16) job 컨테이너 안에서 IMDS에
+    # 닿아야 해서 2로 올린다.
   }
 
   user_data = base64encode(templatefile("${path.module}/user-data.sh.tpl", {
