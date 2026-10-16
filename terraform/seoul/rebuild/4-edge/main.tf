@@ -91,7 +91,7 @@ module "dns" {
   # 실패하면 failover할 대상 자체가 없어 그냥 장애로 끝난다 — 이 레코드
   # 하나만으로는 DR이 완성되지 않는다.
   enable_failover_routing = true
-  failover_hostnames      = ["", "auth"]
+  failover_hostnames      = ["", "auth", "grafana"]
   failover_role           = "PRIMARY"
   enable_health_check     = true
   cluster_name            = data.terraform_remote_state.cluster.outputs.cluster_name
