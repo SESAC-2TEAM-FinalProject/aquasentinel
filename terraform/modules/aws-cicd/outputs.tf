@@ -12,3 +12,8 @@ output "build_role_arns" {
   description = "이미지 빌드·ECR 푸시 역할 ARN — 키는 build_projects의 키(예: web)."
   value       = { for k, r in aws_iam_role.build : k => r.arn }
 }
+
+output "alert_maintenance_role_arn" {
+  description = "알람 점검 모드 CI 잡(main 파이프라인 수동 실행)이 GitLab OIDC로 assume하는 IAM Role ARN. .gitlab-ci.yml에서 CI 변수 ALERT_MAINT_ROLE_ARN으로 사용."
+  value       = aws_iam_role.alert_maintenance.arn
+}
