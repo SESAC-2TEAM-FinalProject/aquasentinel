@@ -335,3 +335,61 @@ apply:global-runner:
         - terraform/modules/**/*
       when: manual
   allow_failure: false
+
+# ---------------------------------------------------------------------------
+# 알람 점검 모드(2026-10-14, 알람 파이프라인 묶음 C) — teardown·점검 전에
+# Alertmanager Silence + 데드맨(Healthchecks.io) 일시정지, 끝나면 해제한다.
+# 로컬 런북과 같은 스크립트(scripts/alerting/maintenance.sh, README 참고)를 부른다.
+# main 파이프라인(push 또는 "Run pipeline")에서 수동 실행 — 사유·기간은 파이프라인
+# 변수 MAINT_REASON · MAINT_DURATION(기본 2h)으로 넘긴다.
+#
+# 권한: 전용 역할 ALERT_MAINT_ROLE_ARN(global/cicd output, main 만 assume) — AWS 권한은
+# eks:DescribeCluster 뿐이고, 클러스터 안에서는 Alertmanager 파드 하나에 exec 만 된다
+# (rebuild/2-cluster Access Entry 그룹 + gitops rbac-maintenance.yaml). terraform 역할을
+# 쓰지 않는 이유도 같다 — 이 잡에 PowerUserAccess 가 필요 없다.
+# HC_API_KEY · HC_CHECK_UUID 는 Protected + Masked 변수(main 에서만 노출).
+#
+# 반영 때 정하는 값(작업계획서 7.1): MAINT_IMAGE(kubectl · aws · curl · bash 가 든 이미지, Shell executor 면 무시).
+# 러너는 클러스터 밖 EC2(global/runner, Docker executor)라 러너 → EKS API(443) 경로가 열려 있어야 한다
+# (러너 보안그룹은 클러스터 보안그룹 허용 대상이 아님 — 반영 전 러너 담당과 확인).
+# 서울만 대상이다(도쿄 rebuild 는 평소 내려가 있음). 도쿄가 필요하면 MAINT_CLUSTER_NAME ·
+# MAINT_REGION · HC_CHECK_UUID 를 파이프라인 변수로 바꿔 실행한다.
+# ---------------------------------------------------------------------------
+.alert_maintenance:
+  stage: apply
+  image:
+    name: ${MAINT_IMAGE}
+    entrypoint: [""]
+  needs: []
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: https://aws
+  variables:
+    MAINT_IMAGE: "alpine/k8s:1.31.4"
+    MAINT_CLUSTER_NAME: aquasentinel-dev-apne2-eks
+    MAINT_REGION: ap-northeast-2
+  before_script:
+    - export AWS_ROLE_ARN="${ALERT_MAINT_ROLE_ARN}"
+    - export AWS_WEB_IDENTITY_TOKEN_FILE="$(pwd)/.aws_web_identity_token"
+    - echo "${AWS_ID_TOKEN}" > "${AWS_WEB_IDENTITY_TOKEN_FILE}"
+    - aws eks update-kubeconfig --name "${MAINT_CLUSTER_NAME}" --region "${MAINT_REGION}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+      when: manual
+  # 수동 잡이 파이프라인을 "막힘" 상태로 두지 않게 한다(apply 잡과 다르게 선택 실행)
+  allow_failure: true
+
+maintenance:start:
+  extends: .alert_maintenance
+  script:
+    - bash scripts/alerting/maintenance.sh start "${MAINT_REASON:-}" "${MAINT_DURATION:-2h}"
+
+maintenance:stop:
+  extends: .alert_maintenance
+  script:
+    - bash scripts/alerting/maintenance.sh stop
+
+maintenance:status:
+  extends: .alert_maintenance
+  script:
+    - bash scripts/alerting/maintenance.sh status

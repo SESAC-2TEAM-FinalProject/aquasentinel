@@ -437,3 +437,19 @@ resource "aws_eks_access_policy_association" "readonly" {
     type = "cluster"
   }
 }
+
+# ---------------------------------------------------------------------------
+# 그룹 접근 — 접근 정책 대신 쿠버네티스 그룹만 붙인다(2026-10-14, 알람 묶음 C).
+# 관리형 접근 정책은 네임스페이스 단위가 가장 좁아 "파드 하나에 exec" 같은
+# 권한을 표현할 수 없다. 범위는 그 그룹을 묶는 RBAC(Role/RoleBinding)가 정하고,
+# RBAC 는 gitops 가 관리한다 — 그룹 이름이 둘을 잇는 고리다.
+# ---------------------------------------------------------------------------
+
+resource "aws_eks_access_entry" "group" {
+  for_each = var.group_access_entries
+
+  cluster_name      = aws_eks_cluster.this.name
+  principal_arn     = each.value.principal_arn
+  kubernetes_groups = each.value.kubernetes_groups
+  type              = "STANDARD"
+}
