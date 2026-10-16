@@ -120,6 +120,16 @@ module "eks" {
   readonly_principal_arns = [
     "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-gitlab-terraform-plan",
   ]
+
+  # CI 알람 점검 역할 — Alertmanager 파드 하나에 exec 해 Silence 를 건다(알람 묶음 C).
+  # 권한은 gitops manifests/alerting/routing/rbac-maintenance.yaml 의 RBAC 가 정한다(그룹 이름으로 연결).
+  # 역할은 global/cicd 가 만든다(이름 규칙은 위 plan 역할과 같다) — global/cicd 적용이 먼저다.
+  group_access_entries = {
+    alert_maintenance = {
+      principal_arn     = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-gitlab-alert-maintenance"
+      kubernetes_groups = ["aquasentinel:alert-maintenance"]
+    }
+  }
 }
 
 # Redis 보안그룹이 EKS 클러스터 보안그룹을 직접 참조한다 — 예전엔 서로 다른

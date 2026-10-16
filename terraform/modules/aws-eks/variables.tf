@@ -130,3 +130,12 @@ variable "readonly_principal_arns" {
   type        = list(string)
   default     = []
 }
+
+variable "group_access_entries" {
+  description = "쿠버네티스 그룹으로만 권한을 받는 IAM 주체(접근 정책 연결 없음 — 권한은 클러스터 안 RBAC 가 정한다). 키는 식별자. 예: CI 알람 점검 역할 → 그룹 aquasentinel:alert-maintenance(gitops manifests/alerting/routing/rbac-maintenance.yaml)."
+  type = map(object({
+    principal_arn     = string
+    kubernetes_groups = list(string)
+  }))
+  default = {}
+}
