@@ -626,6 +626,145 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
   depends_on = [helm_release.argocd]
 }
 
+# Grafana — 서울과 동일 구조적 이유로 Application 전체를 Terraform이 소유한다
+# (seoul/rebuild/3-gitops/applications.tf 주석 참고). CloudWatch 데이터소스는
+# 아직 서울 전용이라 이 SA엔 role-arn annotation이 없다 — authType: default라
+# 자격증명 체인을 못 찾으면 그 데이터소스만 조용히 인증 실패한다(Grafana 기동
+# 자체엔 영향 없음).
+locals {
+  grafana_values = <<-EOT
+    admin:
+      existingSecret: grafana-admin-credentials
+      userKey: admin-user
+      passwordKey: admin-password
+
+    persistence:
+      enabled: true
+      storageClassName: gp2
+      size: 5Gi
+
+    deploymentStrategy:
+      type: Recreate
+
+    resources:
+      requests:
+        cpu: 5m
+        memory: 170Mi
+
+    nodeSelector:
+      aquasentinel.io/nodepool: stateful
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: stateful
+        effect: NoSchedule
+
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        labelValue: "1"
+        searchNamespace: monitoring
+
+    envFromConfigMaps:
+      - name: grafana-oidc-config
+    envFromSecrets:
+      - name: grafana-oidc-client-secret
+
+    envValueFrom:
+      GRAFANA_PG_RO_USER:
+        secretKeyRef:
+          name: grafana-db-ro-credentials
+          key: username
+      GRAFANA_PG_RO_PASSWORD:
+        secretKeyRef:
+          name: grafana-db-ro-credentials
+          key: password
+
+    serviceAccount:
+      create: false
+      name: grafana
+
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+            access: proxy
+            isDefault: true
+          - name: Loki
+            type: loki
+            url: http://loki.monitoring.svc.cluster.local:3100
+            access: proxy
+          - name: PostgreSQL (읽기 전용)
+            type: postgres
+            url: aquasentinel-pg-ro.aquasentinel-db.svc.cluster.local:5432
+            database: app
+            user: $GRAFANA_PG_RO_USER
+            access: proxy
+            jsonData:
+              sslmode: require
+              postgresVersion: 1700
+            secureJsonData:
+              password: $GRAFANA_PG_RO_PASSWORD
+          - name: CloudWatch
+            type: cloudwatch
+            jsonData:
+              authType: default
+              defaultRegion: ap-northeast-2
+  EOT
+}
+
+resource "kubernetes_manifest" "grafana_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "grafana"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+
+      sources = [
+        {
+          repoURL        = "https://grafana.github.io/helm-charts"
+          chart          = "grafana"
+          targetRevision = "10.5.15"
+          helm = {
+            values = local.grafana_values
+          }
+        },
+        {
+          repoURL        = local.gitops_repo_url
+          targetRevision = var.gitops_revision
+          path           = "manifests/grafana/dashboards"
+        },
+      ]
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd, kubernetes_service_account_v1.grafana]
+}
+
 # LBC + Gateway API CRD 부트스트랩 경쟁 조건(서울과 동일 구조적 이슈,
 # seoul/rebuild/3-gitops/applications.tf 주석 참고) — Terraform이 자동 복구한다.
 resource "time_sleep" "wait_for_lbc_bootstrap" {

@@ -332,6 +332,19 @@ resource "kubernetes_service_account_v1" "loki" {
   }
 }
 
+# 웹팀 요청(2026-10-16) — Grafana CloudWatch 데이터소스용 IRSA. 차트가 기본으로
+# 만드는 SA 이름이 이미 "grafana"라 이 이름을 그대로 쓰고 apps/grafana에서
+# serviceAccount.create: false로 전환한다(loki와 같은 패턴).
+resource "kubernetes_service_account_v1" "grafana" {
+  metadata {
+    name      = "grafana"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+    annotations = {
+      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.cluster.outputs.grafana_cloudwatch_role_arn
+    }
+  }
+}
+
 # Thanos(Prometheus 사이드카)의 오브젝트 스토리지 설정 — 버킷/엔드포인트/리전을
 # apps/kube-prometheus-stack의 Helm values에 직접 적지 않고, 이 시크릿을
 # existingSecret으로 참조하게 한다(차트가 objectStorageConfig.existingSecret을

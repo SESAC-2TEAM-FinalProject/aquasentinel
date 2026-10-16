@@ -193,6 +193,19 @@ resource "kubernetes_service_account_v1" "loki" {
   }
 }
 
+# grafana Application을 Terraform이 소유하면서(서울과 동일 구조적 이유,
+# seoul/rebuild/3-gitops/applications.tf 주석 참고) 같은 이름의 SA가 필요해졌다.
+# CloudWatch IRSA는 아직 서울 전용(2-cluster에 도쿄용 role이 없음) — role-arn
+# annotation 없이 SA만 만들어 차트가 참조할 이름을 갖춘다. 도쿄에서도 CloudWatch
+# 데이터소스가 필요해지면 2-cluster에 grafana_irsa 모듈을 추가하고 여기에
+# annotation을 붙인다.
+resource "kubernetes_service_account_v1" "grafana" {
+  metadata {
+    name      = "grafana"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+  }
+}
+
 # Thanos(Prometheus 사이드카)의 오브젝트 스토리지 설정 — 서울과 동일 이유,
 # 값만 도쿄 것(persistent remote_state에서 가져옴).
 resource "kubernetes_secret_v1" "thanos_objstore_config" {
