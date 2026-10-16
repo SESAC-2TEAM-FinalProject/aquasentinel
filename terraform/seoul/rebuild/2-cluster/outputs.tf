@@ -50,6 +50,10 @@ output "cloudnativepg_role_arn" {
   value = module.cloudnativepg_irsa.role_arn
 }
 
+output "grafana_cloudwatch_role_arn" {
+  value = module.grafana_irsa.role_arn
+}
+
 output "collector_role_arn" {
   value = module.collector_irsa.role_arn
 }
