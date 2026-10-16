@@ -342,3 +342,56 @@ module "gitlab_runner_irsa" {
   policy_arns                = { ecr = aws_iam_policy.gitlab_runner_ecr.arn }
   tags                       = var.tags
 }
+
+# ---------------------------------------------------------------------------
+# Grafana — CloudWatch 데이터소스용(웹팀 요청, 2026-10-16: 외부 진입 성공률
+# Route53 헬스체크·ACM 인증서 만료 경보가 CloudWatch 전용 지표라 필요).
+# Grafana 공식 문서의 "metrics-only" 권장 정책에서 Performance Insights
+# (pi:GetResourceMetrics)만 뺐다 — RDS를 안 쓰므로 불필요.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "grafana_cloudwatch" {
+  statement {
+    sid    = "AllowReadingMetricsFromCloudWatch"
+    effect = "Allow"
+    actions = [
+      "cloudwatch:DescribeAlarmsForMetric",
+      "cloudwatch:DescribeAlarmHistory",
+      "cloudwatch:DescribeAlarms",
+      "cloudwatch:ListMetrics",
+      "cloudwatch:GetMetricData",
+      "cloudwatch:GetInsightRuleReport",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "AllowReadingTagsInstancesRegionsFromEC2"
+    effect    = "Allow"
+    actions   = ["ec2:DescribeTags", "ec2:DescribeInstances", "ec2:DescribeRegions"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "AllowReadingResourcesForTags"
+    effect    = "Allow"
+    actions   = ["tag:GetResources"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_policy" "grafana_cloudwatch" {
+  name   = "${local.name_prefix}-grafana-cloudwatch-policy"
+  policy = data.aws_iam_policy_document.grafana_cloudwatch.json
+  tags   = var.tags
+}
+
+module "grafana_irsa" {
+  source = "../../../modules/aws-irsa"
+
+  role_name                  = "${local.name_prefix}-grafana-cloudwatch-role"
+  oidc_provider_arn          = module.eks.oidc_provider_arn
+  namespace_service_accounts = ["${var.grafana_namespace}:${var.grafana_service_account_name}"]
+  policy_arns                = { cloudwatch = aws_iam_policy.grafana_cloudwatch.arn }
+  tags                       = var.tags
+}
