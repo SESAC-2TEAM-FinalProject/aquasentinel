@@ -9,3 +9,7 @@ output "apply_role_arn" {
 output "build_role_arns" {
   value = module.cicd.build_role_arns
 }
+
+output "alert_maintenance_role_arn" {
+  value = module.cicd.alert_maintenance_role_arn
+}

@@ -354,3 +354,35 @@ resource "aws_iam_role_policy" "build_ecr_push" {
   role   = aws_iam_role.build[each.key].id
   policy = data.aws_iam_policy_document.build_ecr_push[each.key].json
 }
+
+# ---------------------------------------------------------------------------
+# 알람 점검 모드 역할 — CI 수동 잡(maintenance:start/stop/status)이 assume한다
+# (2026-10-14, 알람 파이프라인 묶음 C). 하는 일은 Alertmanager 파드 하나에서
+# amtool 로 Silence 를 거는 것뿐이라, AWS 권한은 kubeconfig 를 만들
+# eks:DescribeCluster 만 준다. 클러스터 안 권한은 EKS Access Entry(쿠버네티스
+# 그룹만, 정책 연결 없음 — rebuild/2-cluster)와 gitops 의 monitoring RBAC 가 정한다.
+# 러너 인스턴스 프로필에 주지 않는 이유: 그 러너에서 도는 모든 프로젝트의 잡이
+# 같은 프로필을 써서 권한이 이 레포 밖으로 샌다. 신뢰 조건은 apply 역할과 같다
+# (main 브랜치 파이프라인만 — 점검 모드도 클러스터에 영향을 주는 작업이다).
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "alert_maintenance" {
+  name               = "${local.name_prefix}-gitlab-alert-maintenance"
+  assume_role_policy = data.aws_iam_policy_document.apply_assume_role.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "alert_maintenance" {
+  statement {
+    sid       = "EksDescribe"
+    effect    = "Allow"
+    actions   = ["eks:DescribeCluster"]
+    resources = ["arn:aws:eks:*:${data.aws_caller_identity.current.account_id}:cluster/${var.project_name}-*"]
+  }
+}
+
+resource "aws_iam_role_policy" "alert_maintenance" {
+  name   = "${local.name_prefix}-gitlab-alert-maintenance-eks-describe"
+  role   = aws_iam_role.alert_maintenance.id
+  policy = data.aws_iam_policy_document.alert_maintenance.json
+}
