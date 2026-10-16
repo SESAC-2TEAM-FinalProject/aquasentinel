@@ -48,10 +48,57 @@ locals {
         },
       ]
     }
+    # Grafana 외부 노출(2026-10-16) — admin 비밀번호(위 patches=[])와 달리
+    # OIDC 설정용 ConfigMap은 도메인 값이 실제로 들어가야 해서 서울도
+    # 패치가 필요하다(keycloak/web과 같은 이유 — 실제 도메인 비공개).
     "grafana-secret" = {
       path      = "manifests/grafana/secret"
       namespace = "monitoring"
-      patches   = []
+      patches = [
+        {
+          target = { kind = "ConfigMap", name = "grafana-oidc-config" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/data/GF_SERVER_ROOT_URL"
+              value = "https://grafana.${data.terraform_remote_state.persistent.outputs.domain_name}/"
+            },
+            {
+              op    = "replace"
+              path  = "/data/GF_AUTH_GENERIC_OAUTH_AUTH_URL"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel/protocol/openid-connect/auth"
+            },
+            {
+              op    = "replace"
+              path  = "/data/GF_AUTH_GENERIC_OAUTH_TOKEN_URL"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel/protocol/openid-connect/token"
+            },
+            {
+              op    = "replace"
+              path  = "/data/GF_AUTH_GENERIC_OAUTH_API_URL"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel/protocol/openid-connect/userinfo"
+            },
+          ])
+        },
+      ]
+    }
+    # Grafana HTTPRoute — keycloak/web과 같은 이유로 별도 patched_app(네임스페이스가
+    # monitoring이라 grafana-secret과 같이 못 묶음, 경로도 다른 폴더).
+    "grafana-httproute" = {
+      path      = "manifests/grafana/httproute"
+      namespace = "monitoring"
+      patches = [
+        {
+          target = { kind = "HTTPRoute", name = "grafana" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostnames/0"
+              value = "grafana.${data.terraform_remote_state.persistent.outputs.domain_name}"
+            }
+          ])
+        },
+      ]
     }
     # 알람 수신처(Discord·데드맨)와 ArgoCD 알림 시크릿 — Secrets Manager 이름 접두사가
     # 리전마다 달라(ESO 권한도 그 접두사로 제한) apps/가 아니라 여기서 만든다. 서울은
@@ -145,6 +192,18 @@ locals {
               op    = "replace"
               path  = "/spec/client/appUrl"
               value = "https://${data.terraform_remote_state.persistent.outputs.domain_name}"
+            }
+          ])
+        },
+        # Grafana confidential 클라이언트(2026-10-16) — 대시보드와 달리 고정
+        # 콜백 경로(/login/generic_oauth) 하나만 등록하면 된다.
+        {
+          target = { kind = "KeycloakOIDCClient", name = "aquasentinel-grafana" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/client/redirectUris/0"
+              value = "https://grafana.${data.terraform_remote_state.persistent.outputs.domain_name}/login/generic_oauth"
             }
           ])
         },

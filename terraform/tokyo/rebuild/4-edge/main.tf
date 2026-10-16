@@ -62,7 +62,7 @@ module "dns" {
   create_certificate = false
 
   enable_failover_routing = true
-  failover_hostnames      = ["", "auth"]
+  failover_hostnames      = ["", "auth", "grafana"]
   failover_role           = "SECONDARY"
   enable_health_check     = false
   cluster_name            = data.terraform_remote_state.cluster.outputs.cluster_name

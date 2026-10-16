@@ -95,6 +95,56 @@ locals {
             { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-grafana-admin-password" }
           ])
         },
+        {
+          target = { kind = "ExternalSecret", name = "grafana-oidc-client-secret" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-grafana-oidc-client-secret" }
+          ])
+        },
+        # Grafana 외부 노출(2026-10-16) — 서울 쪽과 같은 이유, 도메인은 persistent
+        # remote state가 서울과 공유라 실제 값은 같지만 구조상 양쪽 다 패치한다.
+        {
+          target = { kind = "ConfigMap", name = "grafana-oidc-config" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/data/GF_SERVER_ROOT_URL"
+              value = "https://grafana.${data.terraform_remote_state.persistent.outputs.domain_name}/"
+            },
+            {
+              op    = "replace"
+              path  = "/data/GF_AUTH_GENERIC_OAUTH_AUTH_URL"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel/protocol/openid-connect/auth"
+            },
+            {
+              op    = "replace"
+              path  = "/data/GF_AUTH_GENERIC_OAUTH_TOKEN_URL"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel/protocol/openid-connect/token"
+            },
+            {
+              op    = "replace"
+              path  = "/data/GF_AUTH_GENERIC_OAUTH_API_URL"
+              value = "https://auth.${data.terraform_remote_state.persistent.outputs.domain_name}/realms/aquasentinel/protocol/openid-connect/userinfo"
+            },
+          ])
+        },
+      ]
+    }
+    # Grafana HTTPRoute — keycloak/web과 같은 이유로 별도 patched_app.
+    "grafana-httproute" = {
+      path      = "manifests/grafana/httproute"
+      namespace = "monitoring"
+      patches = [
+        {
+          target = { kind = "HTTPRoute", name = "grafana" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/hostnames/0"
+              value = "grafana.${data.terraform_remote_state.persistent.outputs.domain_name}"
+            }
+          ])
+        },
       ]
     }
     # 알람 수신처(Discord·데드맨)와 ArgoCD 알림 시크릿 — 서울과 같은 매니페스트에 도쿄
@@ -221,6 +271,23 @@ locals {
           target = { kind = "ExternalSecret", name = "keycloak-db-credentials" }
           patch = jsonencode([
             { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-keycloak-db-password" }
+          ])
+        },
+        # Grafana confidential 클라이언트(2026-10-16) — 서울 쪽과 같은 이유.
+        {
+          target = { kind = "KeycloakOIDCClient", name = "aquasentinel-grafana" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/client/redirectUris/0"
+              value = "https://grafana.${data.terraform_remote_state.persistent.outputs.domain_name}/login/generic_oauth"
+            }
+          ])
+        },
+        {
+          target = { kind = "ExternalSecret", name = "grafana-oidc-client-secret" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-grafana-oidc-client-secret" }
           ])
         },
       ]
