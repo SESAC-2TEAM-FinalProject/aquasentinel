@@ -31,6 +31,16 @@ resource "kubernetes_manifest" "root_app" {
                 { op = "replace", path = "/spec/source/targetRevision", value = var.gitops_revision },
               ])
             },
+            # 동기화 재시도를 apps/ 의 Application 전체에 얹는다(2026-10-19) —
+            # 서울 root.tf 와 같은 패치다. 근거와 값은 main.tf 의
+            # local.app_sync_retry 주석, labelSelector 를 일부러 안 거는 이유와
+            # syncPolicy 전제는 서울 root.tf 주석 참고.
+            {
+              target = { kind = "Application" }
+              patch = jsonencode([
+                { op = "add", path = "/spec/syncPolicy/retry", value = local.app_sync_retry },
+              ])
+            },
             # 원천 저장소 버킷 — 버킷 이름에 계정 ID 가 들어 있어 환경마다 다르다(gitops root-app.yaml 의 같은 패치를 옮겨 옴)
             {
               target = { kind = "Application", name = "api-module-config" }
@@ -63,6 +73,7 @@ resource "kubernetes_manifest" "root_app" {
           prune    = true
           selfHeal = true
         }
+        retry       = local.app_sync_retry
         syncOptions = ["CreateNamespace=true"]
       }
     }

@@ -52,6 +52,23 @@ provider "aws" {
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
+  # Application 동기화 재시도 — Argo CD 는 automated sync 가 실패하면 **같은
+  # 리비전을 다시 시도하지 않는다**(retry 를 안 적으면). 새 클러스터 부트스트랩에서
+  # "아직 없는 CRD"를 쓰는 앱이 먼저 동기화되면 Failed 에서 멈추고 사람이 손으로
+  # 다시 동기화해야 한다 — 시험 구역 1에서 13회를 손으로 돌렸다(SIM-08a, 2026-10-19).
+  # **도쿄는 지운 상태에서 재구축하는 경로라 이쪽이 실제로 더 자주 탄다.**
+  #
+  # 값은 gitops `apps/alerting/application.yaml` 이 이미 쓰던 것을 집 표준으로
+  # 올린 것이다(누적 약 65분). 서울 main.tf 와 같은 값을 유지한다.
+  app_sync_retry = {
+    limit = 10
+    backoff = {
+      duration    = "30s"
+      factor      = 2
+      maxDuration = "10m"
+    }
+  }
+
   gitops_pat_secret_name = "${local.name_prefix}-argocd-gitops-token"
   gitops_repo_url        = "https://gitlab.com/sesac-2team-finalproject/aquasentinel-gitops.git" # GitHub→GitLab 전환(2026-10-11)
 }

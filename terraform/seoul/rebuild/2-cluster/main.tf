@@ -109,8 +109,14 @@ module "eks" {
   # 계정 User, 또는 수동 생성된 크로스어카운트 Role)를 그대로 가리키고, 여기서는 이
   # 컴포넌트가 직접 만드는 크로스어카운트 Role(cross-account-members.tf)을 합류시킨다
   # — ARN을 tfvars에 손으로 또 적으면 두 곳이 어긋날 위험이 생긴다(2026-10-14).
+  #
+  # 이름이 겹치면 이 컴포넌트가 만드는 Role 쪽을 남긴다. 모듈이 team_members 를
+  # name 으로 키를 만들기 때문에(modules/aws-eks/main.tf:393) 같은 이름이 둘이면
+  # "Duplicate object key" 로 plan 단계에서 죽는다 — 2026-10-19 시험 구역 1 에서
+  # 묶음 tfvars 의 team_members 에 `jaehee` 가 들어 있어 실제로 발생했다.
+  # 에러 메시지가 원인을 가리키지 않아 찾기 어려우므로 여기서 걸러 둔다.
   team_members = concat(
-    var.team_members,
+    [for m in var.team_members : m if !contains(keys(local.cross_account_members), m.name)],
     [for name, role in aws_iam_role.cross_account_member : { name = name, iam_arn = role.arn }]
   )
   access_policy_arn = var.access_policy_arn

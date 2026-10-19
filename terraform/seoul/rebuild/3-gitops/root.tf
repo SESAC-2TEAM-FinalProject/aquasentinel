@@ -31,6 +31,26 @@ resource "kubernetes_manifest" "root_app" {
                 { op = "replace", path = "/spec/source/targetRevision", value = var.gitops_revision },
               ])
             },
+            # 동기화 재시도를 apps/ 의 Application 전체에 얹는다(2026-10-19) —
+            # 부트스트랩에서 "남의 CRD"를 쓰는 앱이 먼저 동기화되면 Argo CD 가
+            # Failed 에서 멈추고 같은 리비전을 다시 시도하지 않는다. 근거와 값은
+            # main.tf 의 local.app_sync_retry 주석 참고.
+            #
+            # labelSelector 를 **일부러 걸지 않는다** — gitops-source 라벨이 붙은
+            # 14개만 덮으면 argo-rollouts·external-secrets 처럼 라벨 없는 앱이
+            # 빠지는데, 그 둘도 PodMonitor(monitoring.coreos.com)를 들고 있어 같은
+            # 자리에서 멈춘다. 지금 apps/ 의 Application 25개는 **전부**
+            # syncPolicy 를 갖고 있어 add 가 안전하다(2026-10-19 전수 확인).
+            #
+            # ⚠️ apps/ 에 Application 을 새로 추가할 때 `syncPolicy` 를 빠뜨리면
+            # 이 JSON Patch 의 add 대상 부모가 없어 **root 동기화가 깨진다.**
+            # apps/ 의 Application 은 반드시 syncPolicy 를 갖는다(기존 관례).
+            {
+              target = { kind = "Application" }
+              patch = jsonencode([
+                { op = "add", path = "/spec/syncPolicy/retry", value = local.app_sync_retry },
+              ])
+            },
             # 원천 저장소 버킷 — 버킷 이름에 계정 ID 가 들어 있어 환경마다 다르다(gitops root-app.yaml 의 같은 패치를 옮겨 옴)
             {
               target = { kind = "Application", name = "api-module-config" }
@@ -63,6 +83,7 @@ resource "kubernetes_manifest" "root_app" {
           prune    = true
           selfHeal = true
         }
+        retry       = local.app_sync_retry
         syncOptions = ["CreateNamespace=true"]
       }
     }

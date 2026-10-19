@@ -8,20 +8,63 @@
 # 계열의 문제라 같은 폴링 패턴(wait_for_api_module_namespace)을 재사용한다.
 
 resource "null_resource" "wait_for_karpenter_crds" {
-  depends_on = [kubernetes_manifest.karpenter_app]
+  # kube_prometheus_stack_app 에도 의존해야 한다 — karpenter_app 의 두 번째 소스
+  # (gitops manifests/karpenter)에 ServiceMonitor 가 들어 있고(2026-10-16 관측
+  # 보강분), 그 CRD(monitoring.coreos.com/v1)는 kube-prometheus-stack 이 설치한다.
+  # 새 클러스터엔 아직 없으니 Argo CD 가 karpenter 앱을 **통째로**
+  # `failed to discover server resources for group version monitoring.coreos.com/v1`
+  # (ComparisonError)로 거부하고, 그러면 OCI 차트 쪽 Karpenter CRD 도 같이 안 생겨
+  # 아래 폴링이 반드시 타임아웃한다. 특히 CI 2단계처럼 -target 으로 좁히면
+  # kube_prometheus_stack_app 이 그래프에 아예 없어 CRD 가 영원히 안 생긴다 —
+  # 확정적 실패다(2026-10-19 시험 구역 1 실측, SIM-08a 발견 항목). 기존 클러스터는
+  # 두 CRD 가 이미 있어 no-op.
+  depends_on = [
+    kubernetes_manifest.karpenter_app,
+    kubernetes_manifest.kube_prometheus_stack_app,
+  ]
 
   # (2026-10-14) wait_for_api_module_namespace에서 발견된 것과 같은 마스킹 버그를
   # 피하기 위해, 마지막 조회 결과를 STATUS로 받아 타임아웃 시 exit 1 하도록 작성한다
   # — rm -f가 마지막 줄이면 polling이 전부 실패해도 항상 exit 0으로 끝난다.
   provisioner "local-exec" {
+    # 스크립트가 bash 문법(mktemp·$(…)·seq)이라 셸을 고정한다. 지정하지 않으면
+    # Windows 빌더에서 cmd.exe 로 실행돼 깨진다(2026-10-19 시험 구역 1 확인).
+    # 리눅스 CI 는 원래 bash 라 동작이 바뀌지 않는다.
+    interpreter = ["bash", "-c"]
+
+    # 기다리는 단계를 둘로 나눈 이유는 타임아웃 메시지가 "무엇을 기다리다 죽었나"를
+    # 가리키게 하려는 것이다 — 시험 구역 1에서는 같은 `karpenter CRDs not found`
+    # 한 줄이 서로 다른 원인(레포 자격증명 레이스 / Prometheus CRD 부재) 두 개를
+    # 가려서, 원인 찾기를 두 번 반복해야 했다.
     command = <<-EOT
       CA_FILE=$(mktemp)
       echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
+      KUBECTL="kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority=$CA_FILE --token=${data.aws_eks_cluster_auth.this.token}"
+
+      # 1단계 — Prometheus Operator CRD. 이게 없으면 karpenter 앱이 동기화 자체를
+      # 거부당해 2단계로 넘어갈 수가 없다(위 depends_on 주석 참고).
       for i in $(seq 1 60); do
-        kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get crd nodepools.karpenter.sh ec2nodeclasses.karpenter.k8s.aws >/dev/null 2>&1 && break
+        $KUBECTL get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1 && break
         sleep 5
       done
-      kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get crd nodepools.karpenter.sh ec2nodeclasses.karpenter.k8s.aws
+      if ! $KUBECTL get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+        rm -f "$CA_FILE"
+        echo "TIMEOUT: ServiceMonitor CRD (kube-prometheus-stack) not found after 5m" >&2
+        exit 1
+      fi
+
+      # CRD 가 늦게 생기면 karpenter 앱은 이미 ComparisonError 로 백오프에 들어가
+      # 있다. Argo CD 의 다음 조정 주기(기본 3분)를 그대로 기다리지 않도록 하드
+      # 리프레시를 걸어 즉시 다시 비교하게 한다. 이미 Synced 면 아무 일도 하지 않고,
+      # 실패해도 2단계 폴링이 어차피 기다리므로 판정에 영향을 주지 않는다.
+      $KUBECTL -n argocd annotate applications.argoproj.io karpenter argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+
+      # 2단계 — Karpenter 자신이 등록하는 CRD
+      for i in $(seq 1 60); do
+        $KUBECTL get crd nodepools.karpenter.sh ec2nodeclasses.karpenter.k8s.aws >/dev/null 2>&1 && break
+        sleep 5
+      done
+      $KUBECTL get crd nodepools.karpenter.sh ec2nodeclasses.karpenter.k8s.aws
       STATUS=$?
       rm -f "$CA_FILE"
       if [ "$STATUS" -ne 0 ]; then

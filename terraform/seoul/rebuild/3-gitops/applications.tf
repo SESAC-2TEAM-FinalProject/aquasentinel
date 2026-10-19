@@ -308,6 +308,7 @@ resource "kubernetes_manifest" "patched_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -459,6 +460,7 @@ resource "kubernetes_manifest" "loki_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -586,6 +588,29 @@ locals {
             existingSecret:
               name: thanos-objstore-config
               key: object-store.yaml
+
+    # admission 웹훅 인증서 Job 두 개에도 스케줄링을 넣어야 한다(2026-10-19,
+    # 시험 구역 1 실측 — SIM-08a). 이 차트는 webhook 인증서를 Job 으로 만드는데,
+    # `admission-create` 가 **pre-install → Argo CD 의 PreSync** 단계다. 새 클러스터는
+    # 관리형 노드 3대가 전부 dedicated=stateful taint 라(2-cluster/main.tf) 이 Job 이
+    # Pending 에 빠지고, **PreSync 가 끝나지 않으면 Sync 단계가 시작되지 않아
+    # CRD 자체가 영영 안 생긴다.** 그러면 karpenter 앱이 ServiceMonitor 를 못 읽어
+    # (karpenter.tf 주석) 카펜터가 안 뜨고, 카펜터가 없으니 taint 없는 노드도
+    # 안 생겨서 교착이 닫힌다. `admission-patch` 는 post-install(PostSync)로 같은
+    # values 키를 공유한다 — helm template 91.5.0 으로 두 Job 모두 반영 확인.
+    #
+    # Argo CD 차트에서 global 로 닫은 것(bootstrap.tf)과 **같은 부류**다. 다만 이
+    # 차트에는 컴포넌트 전체에 걸리는 global 스케줄링 키가 없어 컴포넌트별로 적는다.
+    prometheusOperator:
+      admissionWebhooks:
+        patch:
+          nodeSelector:
+            aquasentinel.io/nodepool: stateful
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: stateful
+              effect: NoSchedule
   EOT
 }
 
@@ -619,6 +644,7 @@ resource "kubernetes_manifest" "kube_prometheus_stack_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -701,6 +727,7 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -807,6 +834,7 @@ resource "kubernetes_manifest" "karpenter_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -815,7 +843,29 @@ resource "kubernetes_manifest" "karpenter_app" {
     }
   }
 
-  depends_on = [helm_release.argocd, kubernetes_service_account_v1.karpenter]
+  # gitops_repo_creds 에도 의존해야 한다 — 이 Application 은 두 번째 소스로
+  # **비공개** gitops 레포를 읽는다(멀티소스). helm_release.argocd 에만 의존하면
+  # 시크릿보다 먼저 만들어질 수 있고, 그러면 Argo CD 가 레포를 못 읽어
+  # `HTTP Basic: Access denied` 로 동기화가 멈춘다. root 앱(patched_app)이
+  # 같은 이유로 이미 이렇게 돼 있다 — 2026-10-14 주석 참고.
+  #
+  # (2026-10-19) 시험 구역 1 구축에서 karpenter_app 이 이 레이스에 걸려
+  # CRD 가 안 생겼고, wait_for_karpenter_crds 가 5분 타임아웃으로 죽었다.
+  # -target 으로 단계를 나누면 확정적으로 재현된다. 같은 구조인
+  # grafana_app 도 같이 고친다(아직 안 터졌을 뿐 같은 구멍).
+  # kube_prometheus_stack_app 보다 뒤에 만든다(2026-10-19 추가 요청 1-5) — 이
+  # 앱의 두 번째 소스에 ServiceMonitor 가 있어 monitoring.coreos.com CRD 가
+  # 필요하다. 순서를 정해 두면 Argo CD 가 karpenter 를 처음부터 ComparisonError
+  # 로 보는 일이 줄어 재시도 한도(local.app_sync_retry)를 덜 쓴다. 다만
+  # **depends_on 은 "앱 리소스가 먼저 만들어짐"까지만 보장하고 CRD 가 실제로
+  # 생긴 시점은 보장하지 않는다** — 그 대기는 wait_for_karpenter_crds 의 1단계가
+  # 담당한다(karpenter.tf). 둘은 겹치는 게 아니라 역할이 다르다.
+  depends_on = [
+    helm_release.argocd,
+    kubernetes_secret_v1.gitops_repo_creds,
+    kubernetes_service_account_v1.karpenter,
+    kubernetes_manifest.kube_prometheus_stack_app,
+  ]
 }
 
 # Grafana — 2026-10-16 저녁, "SA 미리 만들고 serviceAccount.create:false"(1번
@@ -962,6 +1012,7 @@ resource "kubernetes_manifest" "grafana_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -970,7 +1021,17 @@ resource "kubernetes_manifest" "grafana_app" {
     }
   }
 
-  depends_on = [helm_release.argocd, kubernetes_service_account_v1.grafana]
+  # gitops_repo_creds 에도 의존해야 한다 — 이 Application 은 두 번째 소스로
+  # **비공개** gitops 레포를 읽는다(멀티소스). helm_release.argocd 에만 의존하면
+  # 시크릿보다 먼저 만들어질 수 있고, 그러면 Argo CD 가 레포를 못 읽어
+  # `HTTP Basic: Access denied` 로 동기화가 멈춘다. root 앱(patched_app)이
+  # 같은 이유로 이미 이렇게 돼 있다 — 2026-10-14 주석 참고.
+  #
+  # (2026-10-19) 시험 구역 1 구축에서 karpenter_app 이 이 레이스에 걸려
+  # CRD 가 안 생겼고, wait_for_karpenter_crds 가 5분 타임아웃으로 죽었다.
+  # -target 으로 단계를 나누면 확정적으로 재현된다. 같은 구조인
+  # grafana_app 도 같이 고친다(아직 안 터졌을 뿐 같은 구멍).
+  depends_on = [helm_release.argocd, kubernetes_secret_v1.gitops_repo_creds, kubernetes_service_account_v1.grafana]
 }
 
 # LBC + Gateway API CRD 부트스트랩 경쟁 조건(2026-10-02 서울 재기동 때 재현
@@ -994,6 +1055,11 @@ resource "null_resource" "restart_lbc_for_gateway_api" {
   # (2026-10-14) 같은 레포의 다른 wait 스크립트들에서 발견된 마스킹 버그(마지막 줄이
   # rm -f라 앞선 kubectl이 실패해도 항상 exit 0)를 여기도 같이 고친다.
   provisioner "local-exec" {
+    # 스크립트가 bash 문법(mktemp·$(…)·seq)이라 셸을 고정한다. 지정하지 않으면
+    # Windows 빌더에서 cmd.exe 로 실행돼 깨진다(2026-10-19 시험 구역 1 확인).
+    # 리눅스 CI 는 원래 bash 라 동작이 바뀌지 않는다.
+    interpreter = ["bash", "-c"]
+
     command = <<-EOT
       CA_FILE=$(mktemp)
       echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"

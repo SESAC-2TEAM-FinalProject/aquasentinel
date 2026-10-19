@@ -360,6 +360,7 @@ resource "kubernetes_manifest" "patched_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -458,6 +459,7 @@ resource "kubernetes_manifest" "loki_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -555,6 +557,7 @@ resource "kubernetes_manifest" "kube_prometheus_stack_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -615,6 +618,7 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -651,8 +655,15 @@ locals {
         cpu: 5m
         memory: 170Mi
 
-    nodeSelector:
-      aquasentinel.io/nodepool: stateful
+    # nodeSelector 를 **일부러 넣지 않는다**(2026-10-19 정정). 서울 값을 그대로
+    # 복사했다가(79c2312, 2026-10-16) `aquasentinel.io/nodepool: stateful` 이
+    # 들어가 있었는데, **도쿄 2-cluster 는 node_labels 를 넘기지 않아** 그 라벨을
+    # 가진 노드가 없다 → Grafana 가 영구 Pending 이 된다(도쿄 재구축이 "전부
+    # Healthy"에 도달하지 못함). 서울은 라벨+taint 가 있어 그 값이 맞다.
+    #
+    # tolerations 는 남겨 둔다 — 도쿄에는 지금 taint 가 없어 **아무 효과도 없고**,
+    # 카펜터 도입과 함께 taint·라벨이 들어오는 순간 바로 필요해진다. 그때
+    # nodeSelector 도 같이 되살려야 한다(서울과 같은 값).
     tolerations:
       - key: dedicated
         operator: Equal
@@ -754,6 +765,7 @@ resource "kubernetes_manifest" "grafana_app" {
           prune    = true
           selfHeal = true
         }
+        retry = local.app_sync_retry
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
@@ -762,7 +774,17 @@ resource "kubernetes_manifest" "grafana_app" {
     }
   }
 
-  depends_on = [helm_release.argocd, kubernetes_service_account_v1.grafana]
+  # gitops_repo_creds 에도 의존해야 한다 — 이 Application 은 두 번째 소스로
+  # **비공개** gitops 레포를 읽는다(멀티소스). helm_release.argocd 에만 의존하면
+  # 시크릿보다 먼저 만들어질 수 있고, 그러면 Argo CD 가 레포를 못 읽어
+  # `HTTP Basic: Access denied` 로 동기화가 멈춘다. root 앱(patched_app)이
+  # 같은 이유로 이미 이렇게 돼 있다 — 2026-10-14 주석 참고.
+  #
+  # (2026-10-19) 시험 구역 1 구축에서 karpenter_app 이 이 레이스에 걸려
+  # CRD 가 안 생겼고, wait_for_karpenter_crds 가 5분 타임아웃으로 죽었다.
+  # -target 으로 단계를 나누면 확정적으로 재현된다. 같은 구조인
+  # grafana_app 도 같이 고친다(아직 안 터졌을 뿐 같은 구멍).
+  depends_on = [helm_release.argocd, kubernetes_secret_v1.gitops_repo_creds, kubernetes_service_account_v1.grafana]
 }
 
 # LBC + Gateway API CRD 부트스트랩 경쟁 조건(서울과 동일 구조적 이슈,
