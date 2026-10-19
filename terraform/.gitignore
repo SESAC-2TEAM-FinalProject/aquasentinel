@@ -10,4 +10,10 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+# 저장된 plan 파일 — 평문 비밀값이 들어간다(아래 둘은 tfplan* 이 못 잡는 이름).
+# 3-gitops plan 에는 Secrets Manager 에서 읽은 GitLab 토큰·웹훅·비밀번호가
+# 그대로 담긴다(2026-10-19 확인: observability.plan·karpenter-step3.plan 에
+# glpat- 토큰 5곳). 한 번 커밋되면 커밋 이력에 남아 파일을 지워도 안 지워진다.
 tfplan*
+*.plan
+*.tfplan
