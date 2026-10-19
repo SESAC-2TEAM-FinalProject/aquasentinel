@@ -56,6 +56,25 @@ locals {
   # 2-cluster의 ESO IAM 정책이 이 접두사로 접근 범위를 좁혀놓았다.
   gitops_pat_secret_name = "${local.name_prefix}-argocd-gitops-token"
   gitops_repo_url        = "https://gitlab.com/sesac-2team-finalproject/aquasentinel-gitops.git" # GitHub→GitLab 전환(2026-10-11)
+
+  # Application 동기화 재시도 — Argo CD 는 automated sync 가 실패하면 **같은
+  # 리비전을 다시 시도하지 않는다**(retry 를 안 적으면). 그래서 새 클러스터
+  # 부트스트랩에서 "아직 없는 CRD"를 쓰는 앱이 먼저 동기화되면 Failed 에서 멈추고
+  # 사람이 손으로 다시 동기화해야 한다 — 시험 구역 1에서 시크릿 계열 4개 앱과
+  # karpenter 를 합쳐 **13회를 손으로** 돌렸다(SIM-08a, 2026-10-19).
+  #
+  # 값은 gitops `apps/alerting/application.yaml` 이 이미 쓰고 있던 것을 그대로
+  # 집 표준으로 올린 것이다(누적 약 65분). 재구축 수렴에는 충분하고, 정말 깨진
+  # 앱은 10회 뒤 Failed 로 드러나 조용히 묻히지 않는다. root.tf 의 kustomize
+  # 패치가 이 값을 apps/ 의 Application 전체에도 얹는다.
+  app_sync_retry = {
+    limit = 10
+    backoff = {
+      duration    = "30s"
+      factor      = 2
+      maxDuration = "10m"
+    }
+  }
 }
 
 # 2-cluster가 EKS+전체 워크로드 IRSA를 갖고 있다(D2, 경로 구조 개편) —

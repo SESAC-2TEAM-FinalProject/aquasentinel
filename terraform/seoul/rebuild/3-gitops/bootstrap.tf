@@ -28,6 +28,11 @@ resource "null_resource" "wait_for_api_module_namespace" {
   # 드러났다(2026-10-13 발견, 2026-10-14 수정). 이제 kubectl 조회 결과를 변수에
   # 담아 마지막에 명시적으로 성공/실패를 판정한다 — rm은 판정과 무관하게 먼저 실행.
   provisioner "local-exec" {
+    # 스크립트가 bash 문법(mktemp·$(…)·seq)이라 셸을 고정한다. 지정하지 않으면
+    # Windows 빌더에서 cmd.exe 로 실행돼 깨진다(2026-10-19 시험 구역 1 확인).
+    # 리눅스 CI 는 원래 bash 라 동작이 바뀌지 않는다.
+    interpreter = ["bash", "-c"]
+
     command = <<-EOT
       CA_FILE=$(mktemp)
       echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
@@ -178,6 +183,32 @@ resource "helm_release" "argocd" {
     configs:
       params:
         controller.diff.server.side: "true"
+
+    # 전역 스케줄링 — 아래 컴포넌트별 설정과 같은 값을 global 에도 둔다.
+    #
+    # 왜 global 이 따로 필요한가(2026-10-19, 시험 구역 1 재구축에서 발견):
+    #   차트는 redis 비밀을 만드는 pre-install 훅 Job(redisSecretInit)을 기본으로
+    #   돌리는데, 아래 7개 컴포넌트에만 nodeSelector/tolerations 를 적어 두어서
+    #   그 훅은 taint 를 못 견뎠다. 새 클러스터에서는 관리형 노드 3대가 전부
+    #   dedicated=stateful:NoSchedule 이고 카펜터는 아직 설치 전이라 받아 줄
+    #   노드가 하나도 없다 — 훅 파드가 Pending 으로 멈추고 helm_release.argocd
+    #   가 pre-install 타임아웃으로 실패한다. 운영 재구축에서도 똑같이 난다
+    #   (SIM-08a 발견 항목).
+    #
+    #   redisSecretInit 한 줄만 더해도 당장은 풀리지만, 차트가 컴포넌트를 더
+    #   늘리면 같은 사고가 반복된다. global 로 바닥을 깔아 그 부류를 닫는다.
+    #
+    #   아래 7개는 그대로 둔다 — 컴포넌트별 값이 global 을 이기므로 렌더링
+    #   결과가 바뀌지 않는다(helm template 으로 동일 확인). 즉 돌고 있는
+    #   운영 파드는 이 변경으로 재시작되지 않는다.
+    global:
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
 
     controller:
       resources:
@@ -350,14 +381,12 @@ resource "kubernetes_service_account_v1" "grafana" {
 # grafana Application을 git에서 지우는 MR이 먼저 머지되면서, 그 Application이
 # 만들었던 차트 기본 SA가 고아로 남았다(Application엔 cascade 삭제 finalizer가
 # 없어 prune돼도 하위 리소스는 안 지워짐 — root.tf의 과거 root import와 같은
-# 이유). create 대신 가져와서 annotation만 갱신한다. (적용 끝나면 root import와
-# 같은 방식으로 이 블록을 지운다 — 남겨두면 이 SA가 없는 새 클러스터에서
-# "가져올 대상이 없다"로 plan이 실패한다.)
-import {
-  to = kubernetes_service_account_v1.grafana
-  id = "monitoring/grafana"
-}
-
+# 이유). create 대신 가져와서 annotation만 갱신한다.
+#
+# (2026-10-19) 여기 있던 import 블록을 지웠다. 바로 위 주석이 예고한 그대로
+# 터졌다 — 시험 구역 1 구축에서 새 클러스터 plan 이
+# `serviceaccounts "grafana" not found` 로 실패했다. 운영은 이미 state 에
+# 들어와 있어 블록을 지워도 영향이 없다(제거 전 state 확인).
 # Thanos(Prometheus 사이드카)의 오브젝트 스토리지 설정 — 버킷/엔드포인트/리전을
 # apps/kube-prometheus-stack의 Helm values에 직접 적지 않고, 이 시크릿을
 # existingSecret으로 참조하게 한다(차트가 objectStorageConfig.existingSecret을
