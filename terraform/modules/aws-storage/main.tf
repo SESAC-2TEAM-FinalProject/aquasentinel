@@ -109,6 +109,84 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
 }
 
 # ---------------------------------------------------------------------------
+# 계정 간 읽기 — 시험 구역(테스트 필드)이 운영 백업에서 DB를 복구할 때 쓴다.
+#
+# 접두사를 반드시 좁히는 이유: observability 버킷에는 CNPG 백업(cloudnativepg/)
+# 말고 Thanos 지표 블록도 같이 들어 있다. 버킷 전체를 열면 시험 계정이 운영
+# 지표 이력까지 읽게 된다. 쓰기는 주지 않는다 — 설정이 아니라 권한으로 막는다.
+#
+# 암호화가 SSE-S3(AES256)라 KMS 키 정책을 따로 열 필요가 없다. SSE-KMS로
+# 바꾸면 키 정책에도 같은 계정을 넣어야 복구가 된다.
+#
+# public_access_block 의 block_public_policy 는 "공개" 정책만 막는다 —
+# 계정을 특정한 주체는 영향받지 않는다.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "cross_account_read" {
+  for_each = { for k, v in var.buckets : k => v if v.cross_account_read != null }
+
+  statement {
+    sid     = "CrossAccountReadObjects"
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:GetObjectVersion"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [for a in each.value.cross_account_read.account_ids : "arn:aws:iam::${a}:root"]
+    }
+
+    resources = [
+      for p in each.value.cross_account_read.prefixes :
+      "${aws_s3_bucket.this[each.key].arn}/${p}"
+    ]
+  }
+
+  # barman-cloud 가 복구 전에 백업 목록을 훑는다 — ListBucket 이 없으면
+  # "백업을 찾을 수 없다"로 끝난다. 접두사 조건으로 목록도 같이 좁힌다.
+  statement {
+    sid     = "CrossAccountListPrefix"
+    effect  = "Allow"
+    actions = ["s3:ListBucket", "s3:ListBucketVersions"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [for a in each.value.cross_account_read.account_ids : "arn:aws:iam::${a}:root"]
+    }
+
+    resources = [aws_s3_bucket.this[each.key].arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = each.value.cross_account_read.prefixes
+    }
+  }
+
+  # GetBucketLocation 은 s3:prefix 조건 키를 받지 않는다 — 위 statement 에
+  # 섞으면 조건이 안 맞아 거부되고, SDK 가 리전을 못 찾아 복구가 멈춘다.
+  # 버킷 리전은 비밀이 아니므로 조건 없이 따로 둔다.
+  statement {
+    sid     = "CrossAccountGetBucketLocation"
+    effect  = "Allow"
+    actions = ["s3:GetBucketLocation"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [for a in each.value.cross_account_read.account_ids : "arn:aws:iam::${a}:root"]
+    }
+
+    resources = [aws_s3_bucket.this[each.key].arn]
+  }
+}
+
+resource "aws_s3_bucket_policy" "cross_account_read" {
+  for_each = { for k, v in var.buckets : k => v if v.cross_account_read != null }
+
+  bucket = aws_s3_bucket.this[each.key].id
+  policy = data.aws_iam_policy_document.cross_account_read[each.key].json
+}
+
+# ---------------------------------------------------------------------------
 # S3 Cross-Region Replication — 복제가 필요한 버킷마다 역할 하나씩.
 # ---------------------------------------------------------------------------
 

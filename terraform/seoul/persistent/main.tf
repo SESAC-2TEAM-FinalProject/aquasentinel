@@ -92,6 +92,14 @@ module "storage" {
       ]
       enable_cross_region_replication    = true
       replication_destination_bucket_arn = data.terraform_remote_state.tokyo_persistent.outputs.bucket_arns["observability"]
+
+      # 시험 구역(테스트 필드)이 운영 기준 백업에서 DB를 복구한다(D-17).
+      # cloudnativepg/ 접두사만 · 읽기만 — 같은 버킷의 Thanos 지표는 열지 않는다.
+      # 시험 구역을 닫으면 이 블록을 지운다.
+      cross_account_read = length(var.testfield_account_ids) == 0 ? null : {
+        account_ids = var.testfield_account_ids
+        prefixes    = ["cloudnativepg/*"]
+      }
     }
     api_raw_store = {
       name_suffix                        = "raw-store"

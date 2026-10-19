@@ -59,3 +59,18 @@ variable "alarm_email_endpoints" {
   type        = list(string)
   default     = []
 }
+
+variable "testfield_account_ids" {
+  description = <<-EOT
+    시험 구역(테스트 필드) 계정 ID 목록. 운영 백업 버킷의 cloudnativepg/ 접두사를
+    읽기 전용으로 열어 준다 — 시험 구역이 운영 기준 백업에서 DB를 복구할 수 있게
+    하기 위한 것이고(D-17, SIM-09a), 그 외 용도는 없다.
+
+    비워 두면 버킷 정책을 아예 만들지 않는다(기본값) — 시험 구역을 닫으면
+    목록에서 빼고 apply 하면 권한이 사라진다.
+
+    ECR pull 허용은 별도다(module "registry" 의 pull_only_account_ids).
+  EOT
+  type        = list(string)
+  default     = []
+}
