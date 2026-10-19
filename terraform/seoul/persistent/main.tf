@@ -59,6 +59,24 @@ locals {
   name_prefix          = "${var.project_name}-${var.environment}"
 }
 
+data "aws_caller_identity" "current" {}
+
+locals {
+  prod_account_id = "379937169195"
+
+  # 시험 구역 계정 목록은 **운영 계정에서 apply 할 때만** 쓴다.
+  #
+  # 이 컴포넌트는 시험 계정에서도 똑같이 돌아간다. 거르지 않으면 시험 구역 A가
+  # 자기 백업 버킷을 시험 구역 B에게 열게 되는데, 그 버킷에는 운영 기준 백업에서
+  # 복구한 데이터가 들어 있다(D-17). ECR(pull_only_account_ids)은 자기 레지스트리를
+  # 여는 것이라 무해해서 거르지 않지만, 버킷은 교차 노출이 생기므로 거른다.
+  testfield_account_ids = (
+    data.aws_caller_identity.current.account_id == local.prod_account_id
+    ? var.testfield_account_ids
+    : []
+  )
+}
+
 data "terraform_remote_state" "tokyo_persistent" {
   backend = "s3"
 
@@ -96,8 +114,8 @@ module "storage" {
       # 시험 구역(테스트 필드)이 운영 기준 백업에서 DB를 복구한다(D-17).
       # cloudnativepg/ 접두사만 · 읽기만 — 같은 버킷의 Thanos 지표는 열지 않는다.
       # 시험 구역을 닫으면 이 블록을 지운다.
-      cross_account_read = length(var.testfield_account_ids) == 0 ? null : {
-        account_ids = var.testfield_account_ids
+      cross_account_read = length(local.testfield_account_ids) == 0 ? null : {
+        account_ids = local.testfield_account_ids
         prefixes    = ["cloudnativepg/*"]
       }
     }
