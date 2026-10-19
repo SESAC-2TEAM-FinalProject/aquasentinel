@@ -153,7 +153,12 @@ module "registry" {
   replication_destination_region  = "ap-northeast-1"
 
   # 시험 구역(테스트 필드) 계정 — 운영 이미지를 받기만 한다(쓰기 권한 없음). 시험 구역을 닫으면 목록에서 뺀다.
-  pull_only_account_ids = ["926762923779"]
+  #
+  # 백업 버킷(local.testfield_account_ids)과 **같은 목록을 쓴다.** 둘이 갈리면
+  # "DB 복구는 되는데 이미지를 못 받는" 상태가 된다 — 시험 구역이 3-gitops 에서
+  # ImagePullBackOff 로 멈춘다. 여기는 자기 레지스트리를 여는 것이라 계정 거르기가
+  # 필요 없어 변수를 그대로 쓴다(버킷 쪽 주석 참고).
+  pull_only_account_ids = var.testfield_account_ids
 }
 
 module "dns" {
