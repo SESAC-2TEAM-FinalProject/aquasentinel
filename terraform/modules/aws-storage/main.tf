@@ -111,9 +111,22 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
 # ---------------------------------------------------------------------------
 # 계정 간 읽기 — 시험 구역(테스트 필드)이 운영 백업에서 DB를 복구할 때 쓴다.
 #
-# 접두사를 반드시 좁히는 이유: observability 버킷에는 CNPG 백업(cloudnativepg/)
-# 말고 Thanos 지표 블록도 같이 들어 있다. 버킷 전체를 열면 시험 계정이 운영
-# 지표 이력까지 읽게 된다. 쓰기는 주지 않는다 — 설정이 아니라 권한으로 막는다.
+# 접두사를 좁히는 것은 "객체 읽기"에만 건다: observability 버킷에는 CNPG
+# 백업(cloudnativepg/) 말고 Thanos 지표 블록도 같이 들어 있어서, 객체를
+# 통째로 열면 시험 계정이 운영 지표 이력을 읽게 된다. 쓰기는 주지 않는다 —
+# 설정이 아니라 권한으로 막는다.
+#
+# 반대로 버킷 수준 액션(ListBucket·GetBucketLocation)에는 조건을 걸지 않는다.
+# barman-cloud 는 HeadBucket 을 부르는데 그 호출에는 s3:prefix 가 실리지 않아
+# 조건을 걸면 거부된다 — 같은 이유로 CNPG 페일오버 시험에서 "Forbidden" 이
+# 났던 기록이 2-cluster/irsa.tf:141 에 남아 있고, 그래서 이 레포의 IRSA 정책도
+# ListBucket 을 조건 없이 허용한다(서울 irsa.tf, 도쿄 CrossRegionListBucket).
+# 버킷 정책도 같은 규칙을 따른다.
+#
+# 맞바꾼 것: 시험 계정이 이 버킷의 **객체 이름 목록**은 전부 볼 수 있다
+# (Thanos 블록 키 포함). 다만 GetObject 가 접두사로 묶여 있어 **내용은 못
+# 읽는다.** 키 이름은 ULID 라 그 자체로 정보가 아니고, 이는 이미 레포가
+# 자기 IRSA 정책에서 받아들인 것과 같은 맞바꿈이다.
 #
 # 암호화가 SSE-S3(AES256)라 KMS 키 정책을 따로 열 필요가 없다. SSE-KMS로
 # 바꾸면 키 정책에도 같은 계정을 넣어야 복구가 된다.
@@ -141,34 +154,16 @@ data "aws_iam_policy_document" "cross_account_read" {
     ]
   }
 
-  # barman-cloud 가 복구 전에 백업 목록을 훑는다 — ListBucket 이 없으면
-  # "백업을 찾을 수 없다"로 끝난다. 접두사 조건으로 목록도 같이 좁힌다.
+  # 버킷 수준 액션 — 조건을 걸지 않는다(위 머리말 참고).
+  #   ListBucket        : barman-cloud 가 복구 전에 백업 목록을 훑는다. 없으면
+  #                       "백업을 찾을 수 없다"로 끝난다. HeadBucket 도 이
+  #                       권한을 쓰는데 s3:prefix 를 싣지 않는다.
+  #   GetBucketLocation : s3:prefix 조건 키를 아예 받지 않는다. 없으면 SDK 가
+  #                       버킷 리전을 못 찾아 복구가 멈춘다.
   statement {
-    sid     = "CrossAccountListPrefix"
+    sid     = "CrossAccountBucketLevelRead"
     effect  = "Allow"
-    actions = ["s3:ListBucket", "s3:ListBucketVersions"]
-
-    principals {
-      type        = "AWS"
-      identifiers = [for a in each.value.cross_account_read.account_ids : "arn:aws:iam::${a}:root"]
-    }
-
-    resources = [aws_s3_bucket.this[each.key].arn]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = each.value.cross_account_read.prefixes
-    }
-  }
-
-  # GetBucketLocation 은 s3:prefix 조건 키를 받지 않는다 — 위 statement 에
-  # 섞으면 조건이 안 맞아 거부되고, SDK 가 리전을 못 찾아 복구가 멈춘다.
-  # 버킷 리전은 비밀이 아니므로 조건 없이 따로 둔다.
-  statement {
-    sid     = "CrossAccountGetBucketLocation"
-    effect  = "Allow"
-    actions = ["s3:GetBucketLocation"]
+    actions = ["s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketLocation"]
 
     principals {
       type        = "AWS"

@@ -17,6 +17,11 @@ variable "buckets" {
       서울(소스)에서만 true로 켠다
     - cross_account_read: 다른 계정이 접두사 아래를 읽기만 하게 한다(버킷 정책).
       prefixes는 반드시 좁힌다 — 버킷 하나에 여러 용도가 섞여 있다.
+      단 prefixes가 좁히는 것은 **객체 읽기(GetObject)**뿐이다. 버킷 수준
+      액션(ListBucket·GetBucketLocation)에는 조건을 걸지 않는다 — barman-cloud의
+      HeadBucket 호출에 s3:prefix가 실리지 않아 조건을 걸면 거부된다(main.tf 머리말).
+      또한 이건 리소스 쪽 허용일 뿐이다. 계정이 다르면 **읽는 쪽 IAM 역할에도**
+      같은 버킷 허용이 있어야 실제로 읽힌다(2-cluster/irsa.tf).
   EOT
   type = map(object({
     name_suffix                        = string

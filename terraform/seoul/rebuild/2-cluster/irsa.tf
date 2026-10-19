@@ -164,6 +164,37 @@ data "aws_iam_policy_document" "cloudnativepg_access" {
     actions   = ["s3:GetBucketLocation"]
     resources = [local.persistent.bucket_arns["observability"]]
   }
+
+  # 다른 계정의 백업에서 복구할 때만 붙는다(시험 구역 — D-17 · SIM-09a).
+  # cnpg_restore_source_bucket_arn 이 비어 있으면 statement 자체가 생기지 않아
+  # 운영 apply 는 영향을 받지 않는다.
+  #
+  # S3 계정 간 접근은 **양쪽이 다 허용**해야 한다. 원본 계정의 버킷 정책만
+  # 열면(리소스 쪽) 읽는 쪽 역할에 권한이 없어 AccessDenied 로 끝난다 —
+  # 그 짝이 이 블록(신원 쪽)이다. 버킷 정책은 원본 계정
+  # seoul/persistent 의 testfield_account_ids 가 만든다.
+  #
+  # ListBucket·GetBucketLocation 에 조건을 걸지 않는 이유는 위 머리말과 같다
+  # (barman-cloud HeadBucket 에 prefix 가 없다). 도쿄 CrossRegion* 와 같은 모양.
+  dynamic "statement" {
+    for_each = var.cnpg_restore_source_bucket_arn == "" ? [] : [1]
+    content {
+      sid       = "CrossAccountRestoreBucketLevel"
+      effect    = "Allow"
+      actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+      resources = [var.cnpg_restore_source_bucket_arn]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.cnpg_restore_source_bucket_arn == "" ? [] : [1]
+    content {
+      sid       = "CrossAccountRestoreReadPrefix"
+      effect    = "Allow"
+      actions   = ["s3:GetObject"]
+      resources = ["${var.cnpg_restore_source_bucket_arn}/${var.cnpg_restore_source_prefix}*"]
+    }
+  }
 }
 
 resource "aws_iam_policy" "cloudnativepg" {

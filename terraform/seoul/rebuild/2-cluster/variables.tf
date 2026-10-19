@@ -220,6 +220,28 @@ variable "processor_service_account_name" {
   default     = "processor"
 }
 
+variable "cnpg_restore_source_bucket_arn" {
+  description = <<-EOT
+    다른 계정의 CNPG 백업에서 복구할 때, 그 **원본 버킷 ARN**.
+    시험 구역이 운영 기준 백업으로 bootstrap.recovery 하는 경우에만 쓴다
+    (D-17 · SIM-09a). 예: arn:aws:s3:::aquasentinel-dev-observability-379937169195
+
+    비워 두면(기본) 관련 statement 가 아예 생기지 않는다 — 운영 apply 는 영향 없음.
+
+    이것만으로는 읽히지 않는다. **원본 계정 쪽**에서도 버킷 정책을 열어야 한다
+    (seoul/persistent 의 testfield_account_ids). S3 계정 간 접근은 신원·리소스
+    양쪽이 다 허용해야 한다.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "cnpg_restore_source_prefix" {
+  description = "위 버킷에서 읽을 접두사. 원본 계정의 cloudnativepg_prefix 와 같아야 한다."
+  type        = string
+  default     = "cloudnativepg/"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
