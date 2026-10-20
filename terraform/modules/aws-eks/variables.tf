@@ -106,6 +106,46 @@ variable "enable_ebs_csi" {
   default     = true
 }
 
+# 코어 애드온 버전 고정 (2026-10-20) — 시험 구역 실측에서 드러난 재현성 결함.
+#
+# 전에는 addon_version 을 비워 둬서 **클러스터를 만드는 날의 AWS 기본값**이
+# 들어갔다. 그래서 같은 코드로 재구축해도 운영과 다른 버전이 깔린다 —
+# 10/19 시험 구역과 운영을 비교했을 때 셋이 달랐다(ebs-csi 는 마이너 차이):
+#
+#   coredns     운영 v1.11.4-eksbuild.79  / 시험 -eksbuild.80
+#   kube-proxy  운영 v1.31.14-eksbuild.36 / 시험 -eksbuild.59
+#   ebs-csi     운영 v1.66.1              / 시험 v1.67.0
+#   vpc-cni     양쪽 v1.22.4-eksbuild.3 (우연히 같았음)
+#
+# SIM-08 이 보는 것이 "코드만으로 같은 상태가 되는가"(IaC 재현성)이므로 미고정은
+# 그 측정 자체를 무의미하게 만든다. 특히 ebs-csi 는 CNPG·Prometheus·Loki 의
+# 볼륨을 전부 붙이는 드라이버라, 운영과 다른 버전으로 DR 을 시험하게 된다.
+#
+# 기본값은 **2026-10-20 운영 클러스터의 현재 버전**이다(K8s 1.31 / eks.72).
+# 그래서 운영에 적용해도 변화가 없다.
+#
+# ⚠️ 고정의 대가: 버전이 저절로 안 올라간다. AWS 가 특정 eksbuild 를 내리면
+#    새 클러스터 생성이 실패할 수 있으므로, K8s 버전을 올릴 때 이 값들도 함께
+#    확인해야 한다. 조회:
+#      aws eks describe-addon --cluster-name <c> --addon-name coredns \
+#        --query 'addon.addonVersion' --output text
+#    빈 문자열("")을 주면 그 애드온만 고정을 풀고 AWS 기본값을 쓴다.
+variable "addon_versions" {
+  description = "코어 애드온 버전 고정값. 빈 문자열이면 그 애드온은 AWS 기본값(미고정)을 쓴다."
+  type = object({
+    vpc_cni    = string
+    coredns    = string
+    kube_proxy = string
+    ebs_csi    = string
+  })
+  default = {
+    vpc_cni    = "v1.22.4-eksbuild.3"
+    coredns    = "v1.11.4-eksbuild.79"
+    kube_proxy = "v1.31.14-eksbuild.36"
+    ebs_csi    = "v1.66.1-eksbuild.1"
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

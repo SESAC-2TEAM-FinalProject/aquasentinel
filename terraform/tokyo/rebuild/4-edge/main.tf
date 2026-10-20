@@ -67,3 +67,19 @@ module "dns" {
   enable_health_check     = false
   cluster_name            = data.terraform_remote_state.cluster.outputs.cluster_name
 }
+
+# ---------------------------------------------------------------------------
+# ALB 미발견 시 apply 실패 (2026-10-20 리전 대조 — 서울 4-edge/alarms.tf 와 동일)
+#
+# 알람·Route53 헬스체크는 서울에만 둔다 — 도쿄는 SECONDARY 이고
+# enable_health_check = false 다. 주 리전을 감시하는 게 설계이므로 그 차이는
+# 의도된 것이고, 이 가드만 리전과 무관하게 필요하다.
+# ---------------------------------------------------------------------------
+resource "terraform_data" "require_alb" {
+  lifecycle {
+    precondition {
+      condition     = !var.require_alb || module.dns.alb_dns_name != null
+      error_message = "Gateway ALB를 찾지 못했다 — 3-gitops 적용과 ALB 생성을 먼저 확인. 의도한 것이면 -var require_alb=false."
+    }
+  }
+}

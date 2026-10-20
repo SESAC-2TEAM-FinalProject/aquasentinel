@@ -221,6 +221,27 @@ locals {
     }
     # 실제 도메인은 cert ARN과 같은 이유로 패치(서울 쪽 주석 참고). DB 비밀번호
     # remoteRef.key도 도쿄 전용 Secrets Manager 이름으로 바꾼다.
+    # (2026-10-20) 이 앱의 ExternalSecret 중 **일부러 패치하지 않는 것들**이 있다.
+    #
+    # 도쿄는 ClusterSecretStore 리전을 var.region 으로 바꿔 도쿄 Secrets Manager
+    # 만 읽는다. 그래서 대부분의 ExternalSecret 키를 aquasentinel-dr-tokyo-* 로
+    # 패치하는데, **값이 서울과 같아야 하는 것은 패치하면 안 된다.**
+    #
+    #   aquasentinel-keycloak-admin → aquasentinel-dev-keycloak-admin-client-secret
+    #
+    # Keycloak 은 클라이언트 비밀값을 자기 DB 안에 저장한다. 리전 DR 은 서울
+    # 백업에서 DB 를 복구하므로 DB 안 admin-cli-service 비밀값은 **서울 값**이고,
+    # 그걸 맞춰 줄 자동 경로가 없다 — 오퍼레이터가 바로 그 자격증명으로
+    # 인증하기 때문이다(401 로 잠기면 아무것도 반영 못 함, SIM-09c 실측).
+    # grafana 클라이언트는 CR 의 secretRef 로 오퍼레이터가 DB 를 덮어 주므로
+    # 값이 달라도 되지만, 이건 아니다.
+    #
+    # 해결은 **서울 시크릿을 도쿄로 복제**하는 것이다(replicate-secret-to-regions).
+    # 복제는 이름을 그대로 유지하므로, 패치하지 않은 이 ExternalSecret 이 그
+    # 이름을 그대로 찾아 맞아떨어진다. **여기에 패치를 추가하면 복제본을 못 찾는다.**
+    # 같은 이유로 api-module 공공 API 키 4개와 grafana-db-ro-password 도 패치하지
+    # 않는다. 자세한 공백 목록은
+    # AWS/docs/테스트필드_기동_필요조건_실측정리_2026-10-19.md 「도쿄 시크릿 공백」.
     "keycloak" = {
       path      = "manifests/keycloak/instance"
       namespace = "keycloak"
@@ -321,6 +342,28 @@ locals {
         },
       ]
     }
+
+    # (2026-10-20 리전 대조) 서울에만 있던 앱. 두 리전이 **같은 aws-data 모듈**로
+    # ElastiCache 를 만들고(2-cluster module "data") 도쿄도 redis_endpoint 출력을
+    # 갖는데, 그걸 긁는 exporter 가 도쿄에만 없었다 — 리전 DR 에서 Redis 지표가
+    # 전혀 수집되지 않는다. 위 CACHE_ENDPOINT 패치가 "도쿄에도 Redis 가 있다"는
+    # 증거다. 인증 토큰 미사용이라 ConfigMap 패치로 충분하다(서울과 동일).
+    "redis-exporter" = {
+      path      = "manifests/redis-exporter"
+      namespace = "monitoring"
+      patches = [
+        {
+          target = { kind = "ConfigMap", name = "redis-exporter-config" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/data/REDIS_ADDR"
+              value = "redis://${data.terraform_remote_state.cluster.outputs.redis_endpoint}:6379"
+            }
+          ])
+        },
+      ]
+    }
   }
 }
 
@@ -402,11 +445,42 @@ locals {
               prefix: index_
               period: 24h
 
+    # (2026-10-20 리전 대조) 서울이 2026-10-15 에 켠 것이 도쿄에 빠져 있었다 —
+    # ServiceMonitor 가 없어 **Loki 본체·loki-canary 지표가 Prometheus 에 전혀
+    # 들어오지 않는다.** 서울에서는 "커버리지 점검 중 발견"으로 고쳤는데 도쿄에
+    # 반영되지 않았다. 리전 DR 에서 로그 파이프라인 상태를 못 보게 된다.
+    monitoring:
+      serviceMonitor:
+        enabled: true
+
     singleBinary:
       replicas: 1
       persistence:
         size: 10Gi
         storageClass: gp2
+      # (2026-10-20 리전 대조) 서울과 같은 값. requests 가 없으면 BestEffort 라
+      # 메모리 압박 시 축출 1순위가 된다 — 고유 데이터(로그)를 들고 1벌로 도는
+      # 워크로드라 축출되면 그대로 멈춘다. 서울 값은 보유 데이터 P95 기준 산정분
+      # (서비스 배치 최종 제안 2026-10-15 7장)이고, 도쿄도 같은 모듈·같은 노드
+      # 구성이라 같은 값을 쓴다.
+      resources:
+        requests:
+          cpu: 25m
+          memory: 230Mi
+
+    # (2026-10-20 리전 대조) loki-canary 도 서울과 같은 값.
+    # tolerations 는 넣는다 — 이건 키 없는 `operator: Exists` 라 **특정 노드 라벨에
+    # 의존하지 않는다**(모든 NoSchedule taint 허용). DaemonSet 이라 모든 노드에
+    # 떠야 하므로, 도쿄에 나중에 taint 가 생겨도 그대로 맞다. nodeSelector 처럼
+    # 라벨을 요구하는 값만 빼는 것이 기준이다.
+    lokiCanary:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      resources:
+        requests:
+          cpu: 5m
+          memory: 20Mi
 
     serviceAccount:
       create: false
@@ -490,6 +564,11 @@ locals {
 
     alertmanager:
       alertmanagerSpec:
+        # (2026-10-20 리전 대조) 서울과 같은 값. requests 가 없으면 BestEffort 다.
+        resources:
+          requests:
+            cpu: 5m
+            memory: 200Mi
         # 기본값(OnNamespace)이면 AlertmanagerConfig가 자기 네임스페이스 알림만
         # 받는다 — monitoring에 둔 라우팅 트리(gitops manifests/alerting)가 web·
         # api-module·aquasentinel-db·nats 알림과, 네임스페이스 라벨이 없는 노드
@@ -497,6 +576,18 @@ locals {
         # 아래 prometheusSpec의 셀렉터 전체 매칭과 같은 이유로 제한을 끈다.
         alertmanagerConfigMatcherStrategy:
           type: None
+        # (2026-10-20 리전 대조) 서울에만 있던 PVC. 없으면 Alertmanager 가
+        # 재시작될 때 **Silence 와 알림 전송 기록이 사라진다** — 리전 DR 직후
+        # 노드가 재배치되는 구간에서 바로 겪게 된다. gp2 최소 단위가 1Gi 라
+        # 그대로 쓴다(실제 사용량은 수십~수백 KB).
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: gp2
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 1Gi
 
     prometheus:
       serviceAccount:
@@ -504,7 +595,18 @@ locals {
           eks.amazonaws.com/role-arn: "${data.terraform_remote_state.cluster.outputs.thanos_role_arn}"
 
       prometheusSpec:
+        # retention 이 서울(14d)과 다른 2d 다 — DR 대기 리전이라 의도된 값으로
+        # 보이지만 근거가 코드·문서에 없다. 리전 DR 측정 기간이 이보다 길어지면
+        # 지표가 잘리므로 팀 확인이 필요하다(2026-10-20 리전 대조에서 표시만 함,
+        # 값은 바꾸지 않았다).
         retention: 2d
+
+        # (2026-10-20 리전 대조) 서울과 같은 값. requests 가 없으면 BestEffort 라
+        # 메모리 압박 시 축출 1순위가 되고, 1벌이라 축출되면 수집이 멈춘다.
+        resources:
+          requests:
+            cpu: 60m
+            memory: 950Mi
 
         podMonitorSelectorNilUsesHelmValues: false
         serviceMonitorSelectorNilUsesHelmValues: false
@@ -585,6 +687,21 @@ locals {
     controllerConfig:
       featureGates:
         ALBGatewayAPI: true
+
+    # (2026-10-20 리전 대조) 서울에만 있던 제약. 2벌이지만 같은 노드 한 대에
+    # 몰릴 수 있어(서울에서 실측으로 확인됨) 그 노드가 사라지면 2벌이 동시에
+    # 없어진다 — **진입점을 만드는 컨트롤러라 리전 DR 에서 특히 아프다.**
+    # labelSelector 를 생략하면 스큐 계산 대상을 못 찾아 제약이 무효가 된다
+    # (이 차트는 자동으로 채워주지 않음, 서울 2026-10-15 실측).
+    # 노드 라벨에 의존하지 않는 제약이라 도쿄에도 그대로 쓴다.
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: aws-load-balancer-controller
+            app.kubernetes.io/instance: aws-load-balancer-controller
   EOT
 }
 
