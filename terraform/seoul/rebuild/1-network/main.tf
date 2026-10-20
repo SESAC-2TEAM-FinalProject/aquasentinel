@@ -31,6 +31,26 @@ provider "aws" {
       component   = "1-network"
     }
   }
+
+  # karpenter.sh/discovery는 2-cluster가 aws_ec2_tag로 붙인다(그쪽 karpenter.tf
+  # 주석 — "네트워크 state를 건드리지 않으려고" 택한 방식). 그런데 aws_subnet의
+  # tags는 선언한 집합 전체를 관리하므로, 소유자가 다른 그 태그가 이쪽에서는
+  # "지워야 할 드리프트"로 보인다. 즉 2-cluster를 적용한 뒤 이 컴포넌트를 그냥
+  # apply하면 태그가 지워지고, Karpenter의 subnetSelectorTerms가 서브넷을 찾지
+  # 못해 새 노드를 못 띄운다.
+  #
+  # 실측(2026-10-20): 시험 구역 1 재구축 측정 SIM-08a-R2 확인 항목 ⑪에서
+  # 발견(창영님) → 운영 plan에서도 동일 재현. private_app[0~2] 세 개가 모두
+  # `"karpenter.sh/discovery" = "aquasentinel-dev-apne2-eks" -> null`.
+  #
+  # ignore_tags는 aws_ec2_tag 같은 개별 태그 리소스에는 영향을 주지 않으므로
+  # (공급자 문서 명시), 2-cluster가 태그를 붙이는 동작은 그대로 유지된다.
+  # lifecycle.ignore_changes 대신 이쪽을 쓴 이유 — 공급자가 "태그를 외부에서
+  # 관리하는 경우"를 위해 둔 자리이고, 공유 모듈(modules/aws-network)에
+  # 카펜터 전용 예외를 심지 않아도 된다.
+  ignore_tags {
+    keys = ["karpenter.sh/discovery"]
+  }
 }
 
 module "network" {
