@@ -52,7 +52,26 @@ data "aws_iam_policy_document" "eso_access" {
       "secretsmanager:GetSecretValue",
       "secretsmanager:DescribeSecret",
     ]
-    resources = ["arn:aws:secretsmanager:*:*:secret:${local.name_prefix}-*"]
+    # 도쿄는 두 접두사를 다 읽어야 한다(2026-10-20 리전 대조에서 발견).
+    #
+    # name_prefix 는 도쿄에서 "aquasentinel-dr-tokyo" 라, 서울과 같은 코드면
+    # aquasentinel-dev-* 를 못 읽는다. 그런데 도쿄가 읽어야 하는 시크릿 중
+    # **값이 서울과 같아야 하는 것들**은 서울 이름(aquasentinel-dev-*)을 그대로
+    # 쓴다 — Secrets Manager 복제가 이름을 유지하기 때문이고, 그 이름을 쓰는
+    # 이유는 3-gitops 가 그 ExternalSecret 들의 키를 일부러 패치하지 않는 것과
+    # 같다(tokyo/rebuild/3-gitops/applications.tf "keycloak" 주석 참고).
+    #
+    # 대표 예: aquasentinel-dev-keycloak-admin-client-secret.
+    # Keycloak 은 클라이언트 비밀값을 자기 DB 안에 저장하고 리전 DR 은 서울
+    # 백업에서 DB 를 복구하므로, 그 값이 서울과 달라지면 오퍼레이터가 어드민
+    # API 에 401 로 잠겨 아무 설정도 반영하지 못한다(SIM-09c 실측).
+    #
+    # 이 줄이 없으면 복제를 걸어도 도쿄 ESO 가 AccessDenied 로 못 읽는다 —
+    # "복제는 성공했는데 클러스터는 여전히 못 쓰는" 상태가 된다.
+    resources = [
+      "arn:aws:secretsmanager:*:*:secret:${local.name_prefix}-*",
+      "arn:aws:secretsmanager:*:*:secret:${var.project_name}-dev-*",
+    ]
   }
 
   statement {

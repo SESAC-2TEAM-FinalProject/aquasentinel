@@ -184,6 +184,116 @@ resource "helm_release" "argocd" {
       params:
         controller.diff.server.side: "true"
 
+      # Keycloak 오퍼레이터 CR 의 커스텀 health (2026-10-19 요청 K-3).
+      #
+      # Argo CD 는 **커스텀 health 가 없는 CR 을 무조건 Healthy 로 본다.** 그래서
+      # KeycloakOIDCClient 가 `HasErrors=True` 여도 Application 은 녹색으로 보였고,
+      # 같은 유형을 두 번 늦게 발견했다:
+      #   2026-10-02  client-admin-api:v2 미활성 → 몇 시간 Healthy 로 가려짐
+      #               (manifests/keycloak/instance/keycloak.yaml 54~66행 주석)
+      #   2026-10-19  계정 간 복구 뒤 어드민 API 401 → 로그인 redirect URI 가
+      #               운영 도메인에 묶인 채 Healthy. "파드는 다 떠 있는데
+      #               로그인만 안 되는" 상태였다(SIM-09c)
+      #
+      # 네 CRD 모두 status.conditions 에 HasErrors(문자열 "True"/"False")를 싣는다
+      # — 운영 클러스터에서 실측 확인. 그 조건 하나만 보고 판정한다.
+      #
+      # HasErrors=True 면 Degraded 다. 기존 Discord 알림의 on-degraded-10m
+      # 트리거가 이걸 집어 가는데, **그게 이 변경의 목적**이다(10분 지연은 알람
+      # 쪽 기존 설정이라 건드리지 않았다).
+      #
+      # 조건이 아직 없으면 Degraded 가 아니라 Progressing 으로 둔다 — 새 클러스터
+      # 에서 오퍼레이터가 CR 을 처음 집기 전에 빨갛게 뜨는 것을 막는다.
+      cm:
+        resource.customizations.health.k8s.keycloak.org_KeycloakOIDCClient: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" then
+                if tostring(c.status) == "True" then
+                  hs.status = "Degraded"
+                  hs.message = c.message or "HasErrors=True (어드민 API 반영 실패)"
+                  return hs
+                elseif tostring(c.status) == "False" then
+                  hs.status = "Healthy"
+                  hs.message = "HasErrors=False"
+                  return hs
+                end
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "오퍼레이터가 HasErrors 를 보고하기 전"
+          return hs
+
+        resource.customizations.health.k8s.keycloak.org_KeycloakSamlClient: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" then
+                if tostring(c.status) == "True" then
+                  hs.status = "Degraded"
+                  hs.message = c.message or "HasErrors=True (어드민 API 반영 실패)"
+                  return hs
+                elseif tostring(c.status) == "False" then
+                  hs.status = "Healthy"
+                  hs.message = "HasErrors=False"
+                  return hs
+                end
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "오퍼레이터가 HasErrors 를 보고하기 전"
+          return hs
+
+        # realm 가져오기는 Done 까지 봐야 한다 — HasErrors=False 인데 Done 이
+        # 아직 False 인 구간(가져오기 진행 중)이 정상적으로 존재한다.
+        resource.customizations.health.k8s.keycloak.org_KeycloakRealmImport: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" and tostring(c.status) == "True" then
+                hs.status = "Degraded"
+                hs.message = c.message or "HasErrors=True (realm 가져오기 실패)"
+                return hs
+              end
+            end
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "Done" and tostring(c.status) == "True" then
+                hs.status = "Healthy"
+                hs.message = "realm 가져오기 완료"
+                return hs
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "realm 가져오기 진행 중"
+          return hs
+
+        # Keycloak 본체는 RollingUpdate=True 가 정상 구간이라 Ready 만 본다.
+        resource.customizations.health.k8s.keycloak.org_Keycloak: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" and tostring(c.status) == "True" then
+                hs.status = "Degraded"
+                hs.message = c.message or "HasErrors=True"
+                return hs
+              end
+            end
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "Ready" and tostring(c.status) == "True" then
+                hs.status = "Healthy"
+                hs.message = "Ready"
+                return hs
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "Keycloak 기동 중"
+          return hs
+
     # 전역 스케줄링 — 아래 컴포넌트별 설정과 같은 값을 global 에도 둔다.
     #
     # 왜 global 이 따로 필요한가(2026-10-19, 시험 구역 1 재구축에서 발견):

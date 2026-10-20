@@ -76,6 +76,109 @@ resource "kubernetes_service_account_v1" "api_module_processor" {
 # 하고, Discord 메시지 한도(2000자) 안에 들게 한다.
 # 서울·도쿄가 같은 값을 쓴다(웹훅 값은 각 리전 Secrets Manager에서 온다).
 locals {
+  # 인프라 설정 — 서울 bootstrap.tf 의 첫 번째 values 블록에서 **스케줄링을 뺀**
+  # 것과 같다. 스케줄링을 왜 빼는지는 helm_release.argocd 주석 참고.
+  argocd_infra_values = <<-EOT
+    configs:
+      # Server-Side Diff — 오퍼레이터·CRD 웹훅이 채우는 암묵적 기본값 때문에
+      # 생기는 영구 OutOfSync 를 막는다. 서울은 2026-10-15 에 켰고(621c4f9)
+      # 도쿄는 빠져 있었다(2026-10-20 발견).
+      params:
+        controller.diff.server.side: "true"
+
+      # Keycloak 오퍼레이터 CR 의 커스텀 health (2026-10-19 요청 K-3).
+      # Argo CD 는 커스텀 health 가 없는 CR 을 무조건 Healthy 로 본다 — 그래서
+      # KeycloakOIDCClient 가 `HasErrors=True` 여도 Application 이 녹색으로 보였고,
+      # 계정 간 복구 뒤 "파드는 다 떠 있는데 로그인만 안 되는" 상태가 가려졌다
+      # (SIM-09c). 근거와 판정 규칙은 서울 bootstrap.tf 의 같은 블록 주석 참고.
+      cm:
+        resource.customizations.health.k8s.keycloak.org_KeycloakOIDCClient: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" then
+                if tostring(c.status) == "True" then
+                  hs.status = "Degraded"
+                  hs.message = c.message or "HasErrors=True (어드민 API 반영 실패)"
+                  return hs
+                elseif tostring(c.status) == "False" then
+                  hs.status = "Healthy"
+                  hs.message = "HasErrors=False"
+                  return hs
+                end
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "오퍼레이터가 HasErrors 를 보고하기 전"
+          return hs
+
+        resource.customizations.health.k8s.keycloak.org_KeycloakSamlClient: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" then
+                if tostring(c.status) == "True" then
+                  hs.status = "Degraded"
+                  hs.message = c.message or "HasErrors=True (어드민 API 반영 실패)"
+                  return hs
+                elseif tostring(c.status) == "False" then
+                  hs.status = "Healthy"
+                  hs.message = "HasErrors=False"
+                  return hs
+                end
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "오퍼레이터가 HasErrors 를 보고하기 전"
+          return hs
+
+        resource.customizations.health.k8s.keycloak.org_KeycloakRealmImport: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" and tostring(c.status) == "True" then
+                hs.status = "Degraded"
+                hs.message = c.message or "HasErrors=True (realm 가져오기 실패)"
+                return hs
+              end
+            end
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "Done" and tostring(c.status) == "True" then
+                hs.status = "Healthy"
+                hs.message = "realm 가져오기 완료"
+                return hs
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "realm 가져오기 진행 중"
+          return hs
+
+        resource.customizations.health.k8s.keycloak.org_Keycloak: |
+          local hs = {}
+          if obj.status ~= nil and obj.status.conditions ~= nil then
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "HasErrors" and tostring(c.status) == "True" then
+                hs.status = "Degraded"
+                hs.message = c.message or "HasErrors=True"
+                return hs
+              end
+            end
+            for _, c in ipairs(obj.status.conditions) do
+              if c.type == "Ready" and tostring(c.status) == "True" then
+                hs.status = "Healthy"
+                hs.message = "Ready"
+                return hs
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "Keycloak 기동 중"
+          return hs
+  EOT
+
   argocd_values = <<-EOT
     notifications:
       secret:
@@ -133,7 +236,23 @@ resource "helm_release" "argocd" {
   version          = "10.9.2"
   namespace        = "argocd"
   create_namespace = true
-  values           = [local.argocd_values]
+
+  # 첫 번째는 인프라 설정(Server-Side Diff · Keycloak CR health), 두 번째는 알림.
+  # Helm 은 목록 순서대로 값을 깊게 병합한다.
+  #
+  # (2026-10-20) 도쿄에는 이 첫 번째 블록이 아예 없었다 — 서울은
+  # `values = [인프라설정, 알림]` 인데 도쿄는 알림 하나뿐이었다. 그래서
+  # **서울이 2026-10-15 에 고친 Server-Side Diff 가 도쿄에 없었다**(커밋 621c4f9,
+  # "암묵적 기본값으로 인한 영구 OutOfSync 근본 해결"). 그대로 리전 DR 을 돌리면
+  # 오퍼레이터·CRD 웹훅이 채운 기본값 때문에 여러 앱이 영구 OutOfSync 가 되고,
+  # selfHeal 이 켜져 있어 계속 재동기화를 돌린다 — "전부 Synced/Healthy" 가
+  # 끝까지 안 나온다.
+  #
+  # 스케줄링(global · 컴포넌트 7개)은 **일부러 넣지 않는다** — 도쿄 2-cluster 는
+  # node_labels·node_taints 를 넘기지 않아 `aquasentinel.io/nodepool` 라벨을 가진
+  # 노드가 없다. nodeSelector 를 복사해 넣으면 그 파드는 반드시 Pending 이 된다
+  # (grafana_values 에서 실제로 그랬다 — applications.tf 주석 참고).
+  values = [local.argocd_infra_values, local.argocd_values]
 }
 
 resource "kubernetes_secret_v1" "gitops_repo_creds" {

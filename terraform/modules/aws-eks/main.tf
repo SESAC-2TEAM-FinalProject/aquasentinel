@@ -281,8 +281,9 @@ locals {
 }
 
 resource "aws_eks_addon" "vpc_cni" {
-  cluster_name = aws_eks_cluster.this.name
-  addon_name   = "vpc-cni"
+  cluster_name  = aws_eks_cluster.this.name
+  addon_name    = "vpc-cni"
+  addon_version = var.addon_versions.vpc_cni != "" ? var.addon_versions.vpc_cni : null
 
   configuration_values = length(local.vpc_cni_config) > 0 ? jsonencode(local.vpc_cni_config) : null
 
@@ -290,8 +291,9 @@ resource "aws_eks_addon" "vpc_cni" {
 }
 
 resource "aws_eks_addon" "coredns" {
-  cluster_name = aws_eks_cluster.this.name
-  addon_name   = "coredns"
+  cluster_name  = aws_eks_cluster.this.name
+  addon_name    = "coredns"
+  addon_version = var.addon_versions.coredns != "" ? var.addon_versions.coredns : null
 
   # 배치 제어 — locals의 "코어 애드온 배치 제어" 주석 참고.
   # replicaCount를 3으로 올린 이유: hostname DoNotSchedule 제약 때문에 3벌은
@@ -311,8 +313,9 @@ resource "aws_eks_addon" "coredns" {
 }
 
 resource "aws_eks_addon" "kube_proxy" {
-  cluster_name = aws_eks_cluster.this.name
-  addon_name   = "kube-proxy"
+  cluster_name  = aws_eks_cluster.this.name
+  addon_name    = "kube-proxy"
+  addon_version = var.addon_versions.kube_proxy != "" ? var.addon_versions.kube_proxy : null
 
   resolve_conflicts_on_update = "OVERWRITE"
 }
@@ -364,6 +367,7 @@ resource "aws_eks_addon" "ebs_csi" {
   count                    = var.enable_ebs_csi ? 1 : 0
   cluster_name             = aws_eks_cluster.this.name
   addon_name               = "aws-ebs-csi-driver"
+  addon_version            = var.addon_versions.ebs_csi != "" ? var.addon_versions.ebs_csi : null
   service_account_role_arn = aws_iam_role.ebs_csi[0].arn
 
   # 컨트롤러 배치 제어 — coredns와 같은 이유·같은 방식(locals 주석 참고).
