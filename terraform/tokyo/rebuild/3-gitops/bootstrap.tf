@@ -70,6 +70,10 @@ resource "kubernetes_service_account_v1" "api_module_processor" {
 # on-degraded-10m의 10분 조건: 재구축 때 Application들이 잠깐 Degraded를 거치므로,
 # 동기화가 끝나고 10분 넘게 이어질 때만 보낸다. Alertmanager의 재구축 억제 규칙은
 # 이 경로에 적용되지 않는다.
+# 🔴 10분을 재는 기준점은 "Degraded가 된 시각"이 아니라 "마지막 동기화가 끝난 시각
+# (operationState.finishedAt)"이다. 그래서 평상시에는 게이트가 열려 있어 Degraded가
+# 되는 순간 바로 알림이 간다(서울 2026-10-20 실측). 그래서 알림 제목에 "10분 이상"을
+# 쓰지 않는다 — 실제 발송 시점과 어긋난다. 서울과 같은 값을 유지한다.
 # 구독을 Application 31개에 annotation으로 달지 않고 전역 구독 하나로 건 이유:
 # 새 Application도 자동으로 포함된다.
 # 템플릿의 toJson·trunc: 실패 메시지에 따옴표·줄바꿈이 있어도 JSON이 깨지지 않게
@@ -197,7 +201,7 @@ locals {
             discord:
               method: POST
               body: |
-                {"username": "ArgoCD", "content": {{ printf "**[ArgoCD] %s — Degraded 10분 이상**\n동기화 리비전: %s\n확인: kubectl get application %s -n argocd -o jsonpath='{.status.health}'" .app.metadata.name .app.status.sync.revision .app.metadata.name | toJson }}}
+                {"username": "ArgoCD", "content": {{ printf "**[ArgoCD] %s — Degraded**\n동기화 리비전: %s\n확인: kubectl get application %s -n argocd -o jsonpath='{.status.health}'" .app.metadata.name .app.status.sync.revision .app.metadata.name | toJson }}}
         template.app-sync-failed: |
           webhook:
             discord:
