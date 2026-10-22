@@ -1,0 +1,55 @@
+# SIM-11a-R1 주입 — 서울 진입점 차단(감지만)
+#
+# 무엇을 하나: ALB 서브넷에서 `status-svc` 파드로 들어오는 트래픽만 막는다.
+#              클러스터 안(노드·파드)은 건드리지 않는다 — 그게 이 변형이 만들려는
+#              상황("진입점만 막힘 · 클러스터는 살아 있음")이기 때문이다.
+#
+# 왜 allow 목록이 아니라 `except` 인가:
+#   NetworkPolicy 는 허용 목록이다. 노드 서브넷을 일일이 적으면 서브넷이 늘 때마다
+#   이 파일이 낡는다. 반대로 "0.0.0.0/0 에서 ALB 서브넷만 빼고 허용"으로 적으면
+#   막는 대상(ALB)만 명시되고 나머지는 자동으로 열린다.
+#   같은 `from` 목록의 항목들은 OR 이므로 아래 셋 중 하나만 맞아도 통과한다.
+#     - ipBlock 0.0.0.0/0 except ALB 서브넷  → 노드·외부 기타 통과
+#     - podSelector {}                        → 같은 네임스페이스 파드 통과
+#     - namespaceSelector {}                  → 다른 네임스페이스 파드 통과
+#   ALB 는 파드가 아니고 ALB 서브넷은 except 에 있으므로 어디에도 안 걸려 막힌다.
+#
+# 🔴 kubelet 준비 프로브는 막히지 않는다 — 프로브는 파드가 있는 **노드**에서 오고
+#    노드 서브넷(10.0.16.0/20 · 10.0.32.0/20 · 10.0.64.0/20)은 except 에 없다.
+#    그래서 주입 중에도 `ContainersReady=True` 가 유지된다 → 사전등록 기-4 의 기준.
+#
+# 🔴 그러나 ALB 준비 게이트는 별개다 — ALB 대상 헬스체크가 실패하면
+#    `target-health.elbv2.k8s.aws/...` 조건이 False 로 갈 수 있고, 그러면 파드
+#    `Ready` 가 떨어져 **Service 엔드포인트가 빠진다**(엔드포인트는 Ready 를 따른다).
+#    예상된 결과로 두고 사전등록 위험 ③ 에 적었다. 자세한 것은 사전등록.md 참고.
+#
+# CIDR 근거: ALB = public 서브넷 3개, 2026-10-22 운영 실측값과 구역 1(창영님 10/21
+#            제공)이 일치. 노드(private-app) 서브넷과 겹치지 않는다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sim-11a-block-alb-ingress
+  namespace: web
+  labels:
+    simulation: sim-11a-r1
+  annotations:
+    # Argo CD 가 관리하지 않는다 — kubectl 로 넣고 kubectl 로 지우는 일회성 주입이다.
+    # `web` 앱이 이 자원을 모르므로 selfHeal 대상이 아니다.
+    aquasentinel.io/purpose: "SIM-11a-R1 주입. 측정 뒤 반드시 삭제한다"
+spec:
+  podSelector:
+    matchLabels:
+      app: status-svc
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/24 # public ap-northeast-2a (ALB)
+              - 10.0.1.0/24 # public ap-northeast-2c (ALB)
+              - 10.0.2.0/24 # public ap-northeast-2b (ALB)
+        - podSelector: {}
+        - namespaceSelector: {}
