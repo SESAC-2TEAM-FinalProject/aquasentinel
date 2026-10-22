@@ -203,6 +203,100 @@ resource "kubernetes_manifest" "karpenter_nodepool_general" {
   depends_on = [kubernetes_manifest.karpenter_ec2nodeclass_default]
 }
 
+# ---------------------------------------------------------------------------
+# NodePool "stateful-spare" — 온디맨드 1대가 빠졌을 때만 뜨는 예비 자리.
+# SIM-14b-R1 검증 · SIM-14 결정 ①(카펜터 수정 방안 3.2) · 2026-10-23 반영.
+#
+# 왜 필요한가 — 관리형 노드그룹에 노드 자동 복구(nodeRepairConfig) 설정이 없고
+# ASG 헬스체크가 `EC2`만이라, 인스턴스가 **살아 있는 채 NotReady** 가 되는 이탈
+# (cordon · drain · kubelet NotReady)은 ASG 가 교체해 주지 않는다. 예비 풀이
+# 없던 13d-R1 에서 고정 파드가 20분 Pending 이었다. 14b-R1 에서 이 풀을 넣고
+# 같은 이탈을 재니 대체 290초였고(DB 파드 종료 대기 180초가 하한을 정한다),
+# 카펜터가 볼륨이 묶인 AZ 를 따라 노드를 띄우는 것도 확인했다.
+#
+# 라벨 · taint 를 관리형 노드그룹과 같게 둔다 — CNPG·NATS(nodeSelector
+# aquasentinel.io/nodepool=stateful)가 수정 없이 그대로 들어온다. 카펜터 컨트롤러는
+# nodeAffinity karpenter.sh/nodepool DoesNotExist 라 예비 노드에는 안 뜬다.
+#
+# 🔴 aquasentinel.io/spare="true" 라벨이 이 풀만의 표식이다 — 상시 워크로드
+# (api-module · 플랫폼 · CronJob)에 nodeAffinity required `spare DoesNotExist` 를
+# 넣어 **부하가 이 자리를 먹지 못하게** 막는다(재희님 2026-10-22 결정 — 확정본
+# 초안의 「선호 키 교체 + general weight: 50」 안을 이것으로 대체했다. weight 는
+# 순서에 의존하고 general 이 상한에 걸리면 부하가 예비 1대를 먹을 수 있었다).
+#
+# 평소 0대다. 비면 1분 뒤 회수(WhenEmpty).
+# 🔴 수명은 720h(기본과 같게 명시) — 짧게 잡으면 수명 만료로 고정 파드가 다시
+# 옮겨 다닌다. **복귀는 런북으로** 한다: 원래(또는 ASG 가 바꾼) 노드 Ready 확인 →
+# 예비 노드 cordon → drain(PDB 존중 · CNPG 가 primary 면 switchover 먼저) →
+# 비면 1분 뒤 회수. WhenEmpty 라 원래 노드가 돌아와도 파드가 스스로 돌아오지 않는다.
+# ---------------------------------------------------------------------------
+
+resource "kubernetes_manifest" "karpenter_nodepool_stateful_spare" {
+  manifest = {
+    apiVersion = "karpenter.sh/v1"
+    kind       = "NodePool"
+    metadata = {
+      name = "stateful-spare"
+    }
+    spec = {
+      template = {
+        metadata = {
+          labels = {
+            "aquasentinel.io/nodepool" = "stateful"
+            "aquasentinel.io/spare"    = "true"
+          }
+        }
+        spec = {
+          nodeClassRef = {
+            group = "karpenter.k8s.aws"
+            kind  = "EC2NodeClass"
+            name  = "default"
+          }
+          # 관리형 노드그룹과 같은 taint — 일반 워크로드가 섞여 앉지 못한다.
+          taints = [
+            {
+              key    = "dedicated"
+              value  = "stateful"
+              effect = "NoSchedule"
+            },
+          ]
+          expireAfter = "720h"
+          requirements = [
+            {
+              key      = "node.kubernetes.io/instance-type"
+              operator = "In"
+              # 노드그룹과 같은 유형을 쓴다(2-cluster node_instance_types = t3.large).
+              # 고정 파드가 원래 노드와 같은 크기 자리로 가야 requests 가 들어간다.
+              values = data.terraform_remote_state.cluster.outputs.node_instance_types
+            },
+            {
+              key      = "karpenter.sh/capacity-type"
+              operator = "In"
+              values   = ["on-demand"]
+            },
+          ]
+        }
+      }
+      disruption = {
+        # general 과 달리 WhenEmpty — 비었을 때만 회수한다. Underutilized 까지
+        # 보면 고정 파드가 반쯤 찬 예비 노드를 카펜터가 다시 옮기려 든다.
+        consolidationPolicy = "WhenEmpty"
+        consolidateAfter    = "1m"
+        budgets = [
+          { nodes = "100%" },
+        ]
+      }
+      # 1대만 — t3.large 2 vCPU 기준. node_instance_types 를 더 큰 유형으로 바꾸면
+      # 이 값도 같이 봐야 한다.
+      limits = {
+        cpu = "2"
+      }
+    }
+  }
+
+  depends_on = [kubernetes_manifest.karpenter_ec2nodeclass_default]
+}
+
 # NodePool "stateful"은 스테이트풀 복귀 작업(2026-10-14)으로 제거했다 — CNPG·NATS가
 # 더 이상 카펜터가 아니라 관리형 노드그룹 전용 고정 3대(온디맨드, 2-cluster/main.tf의
 # node_labels/node_taints)에서 돈다. 보호장치 3종 중 이 리소스가 담당하던 ②③
