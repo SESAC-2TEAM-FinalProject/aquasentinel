@@ -23,6 +23,12 @@ variable "domain_name" {
   type        = string
 }
 
+variable "loki_retention_days" {
+  description = "도쿄 Loki 버킷의 현재 버전 만료 일수. 서울(seoul/persistent/variables.tf)과 같은 값으로 둔다 — 리전마다 다르면 DR 전환 뒤 로그 보관 기간이 조용히 바뀐다."
+  type        = number
+  default     = 30
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

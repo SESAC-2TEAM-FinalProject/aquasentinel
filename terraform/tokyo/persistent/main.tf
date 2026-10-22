@@ -57,6 +57,29 @@ module "storage" {
       name_suffix       = "raw-store"
       enable_versioning = true
     }
+    # Loki 전용 버킷 — 서울과 같은 이유로 공유 버킷+prefix 를 쓸 수 없다
+    # (seoul/persistent/main.tf 주석: Loki Helm 차트의 use_thanos_objstore/
+    # storage_prefix 지원에 알려진 버그가 있어 classic S3 설정을 쓰는데, 그건
+    # 버킷 단위만 받는다 — grafana/loki#16599·#18784·#16543).
+    #
+    # 🔴 서울에는 있는데 여기만 없어서, 도쿄 전환을 시도하면 **plan 단계에서
+    # 멈춰 있었다**("key does not identify an element"). 막히는 곳이 두 군데고
+    # 적용 순서가 1→2→3 이라 **2-cluster 가 먼저** 걸린다:
+    #   - rebuild/2-cluster/irsa.tf  : local.persistent.bucket_arns["loki"]
+    #                                  (Loki 파드의 S3 쓰기 권한 IRSA)
+    #   - rebuild/3-gitops/applications.tf : bucket_names["loki"] (Loki values)
+    # 2026-10-19 에 3-gitops 쪽만 발견해 적어 뒀는데, 10-22 전수 대조에서
+    # 2-cluster 가 먼저라는 걸 확인했다. 즉 이 버킷이 없으면 도쿄는 2단계에서
+    # 더 못 간다.
+    #
+    # 도쿄 Loki 는 자기 리전 로그만 담는다 — 서울에서 복제해 오는 대상이
+    # 아니므로 버저닝도 필요 없다(서울 쪽 loki 버킷과 동일한 판단).
+    loki = {
+      name_suffix = "loki"
+      expiration_rules = [
+        { id = "loki-expiration", days = var.loki_retention_days }
+      ]
+    }
   }
 
   tags = var.tags
