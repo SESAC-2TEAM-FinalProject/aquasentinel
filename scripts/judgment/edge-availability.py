@@ -113,8 +113,12 @@ def main() -> int:
         if s >= WINDOW_END:
             raise SystemExit(f"창({WINDOW_START:%m/%d}~{WINDOW_END:%m/%d})에 {a.week}주차가 없다")
     elif a.since and a.until:
-        s = datetime.fromisoformat(a.since.replace("Z", "+00:00"))
-        e = datetime.fromisoformat(a.until.replace("Z", "+00:00"))
+        # 시간대를 안 적으면 UTC 로 본다 — 안 그러면 아래 now 비교에서 naive/aware 로 깨진다.
+        # 창 기록은 월요일에 한 번뿐이라, 입력 형식으로 멈추는 일이 없어야 한다.
+        s, e = (datetime.fromisoformat(x.replace("Z", "+00:00")) for x in (a.since, a.until))
+        s, e = (t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in (s, e))
+        if e <= s:
+            raise SystemExit(f"--until({e:%Y-%m-%d %H:%M}Z)가 --since({s:%Y-%m-%d %H:%M}Z)보다 뒤여야 한다")
     else:
         raise SystemExit("--week N 또는 --since/--until 중 하나는 있어야 한다")
 
@@ -160,7 +164,10 @@ def main() -> int:
             w = csv.writer(f)
             w.writerow(["timestamp_utc", "minimum"])
             for t, v in pts:
-                w.writerow([t.strftime("%Y-%m-%dT%H:%M:%SZ"), int(v)])
+                # 🔴 astimezone 을 빼면 안 된다. aws cli 는 Timestamp 를 지역 시간대로 내놓는다
+                # ("2026-10-22T09:02:00+09:00"). 그대로 strftime 하면 KST 숫자에 Z 를 붙여,
+                # 가용성 계산은 맞는데 증거로 남는 CSV 의 시각만 9시간 틀린다.
+                w.writerow([t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), int(v)])
 
         summary.append({**hc, "points": len(pts), "expected": expected_total, "gap": gap,
                         "ok": ok, "bad": bad, "availability": avail, "csv": os.path.basename(csv_path)})
