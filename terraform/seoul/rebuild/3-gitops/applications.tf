@@ -611,6 +611,46 @@ locals {
               operator: Equal
               value: stateful
               effect: NoSchedule
+      # SIM-14h-R1 「범위 밖 3종」(2026-10-23 반영) — 오퍼레이터 Deployment 자체.
+      # 위 admissionWebhooks.patch 는 설치 때 도는 Job 두 개 몫이고, 오퍼레이터
+      # 파드에는 스케줄링이 없어 스팟에만 떨어져 있었다. CPU 요청이 0 이라
+      # 온디맨드 예약률에는 영향이 없다(14h 실측).
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          # 🔴 예비 풀(stateful-spare · 라벨 aquasentinel.io/spare=true) 차단
+          #    (재희님 2026-10-22 결정 — 선호 키 교체 + general weight 안을 대체)
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: aquasentinel.io/spare
+                    operator: DoesNotExist
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: aquasentinel.io/nodepool
+                    operator: In
+                    values: ["stateful"]
+
+    # SIM-14h-R1 「범위 밖 3종」 중 kube-state-metrics (2026-10-23 반영).
+    # 🔴 여기만 선호가 아니라 nodeSelector(필수)다 — 이것이 #2·#3 을 **재는 수단**
+    #    이라서다. 스팟에서 끊기면 장애가 아니라 분모가 빠져(ksm_gap_samples)
+    #    판정 근거가 망가진다. 창 시작 실측에서 복제본 1개·고정 없음으로 스팟에
+    #    있는 것을 확인했고(판정 창 메모 「사각 4개」), 재희님 확정본 3.4 도
+    #    「KSM 은 온디맨드 필수」로 적었다. CPU 요청 0 이라 예약률 영향 없음.
+    kube-state-metrics:
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
   EOT
 }
 
@@ -694,6 +734,41 @@ locals {
           matchLabels:
             app.kubernetes.io/name: aws-load-balancer-controller
             app.kubernetes.io/instance: aws-load-balancer-controller
+
+    # SIM-14h-R1 「범위 밖 3종」(2026-10-23 반영) — 온디맨드로 옮긴다.
+    #
+    # 🔴 이것이 14h 의 「스팟 2대가 줄지 않음」 원인이었다. 상시 워크로드를 전부
+    #    온디맨드로 옮긴 뒤에도 카펜터가 스팟 한 대를 지우지 못했고
+    #    (「Can't remove without creating 2 candidates」), 스팟에 남은 것은 CPU 요청 0
+    #    인 범위 밖 3종뿐이었다. 위 hostname 분산이 DoNotSchedule 이라 이 2벌은
+    #    서로 다른 노드가 필수이고, 스팟 2대에 하나씩 앉아 양쪽을 붙잡고 있었다.
+    #    그래서 이 블록이 들어가야 「평소 스팟 0대」가 성립한다.
+    #
+    # 🔴 반영 순서 — 이 변경만 단독으로 적용한다. 2벌이 옮겨 가는 동안 한쪽이
+    #    잠깐 Pending 이 될 수 있고(maxSkew 1 · DoNotSchedule), 그 사이
+    #    TargetGroupBinding 조정이 멈춘다. 다른 변경과 섞으면 원인 분리가 안 된다.
+    #    위 분산은 그대로 둔다 — 온디맨드가 3대라 서로 다른 노드에 들어갈 자리가 있다.
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: stateful
+        effect: NoSchedule
+    affinity:
+      nodeAffinity:
+        # 🔴 예비 풀(stateful-spare · 라벨 aquasentinel.io/spare=true) 차단
+        #    (재희님 2026-10-22 결정 — 선호 키 교체 + general weight 안을 대체)
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: aquasentinel.io/spare
+                  operator: DoesNotExist
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: aquasentinel.io/nodepool
+                  operator: In
+                  values: ["stateful"]
   EOT
 }
 
