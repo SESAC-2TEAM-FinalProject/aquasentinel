@@ -106,14 +106,45 @@ alarm_state() {
     aws cloudwatch describe-alarms --region "$R53_REGION" --alarm-names "$a" --output json 2>/dev/null \
       | python3 -c "
 import sys,json
+from datetime import datetime, timezone
+# 🔴 aws cli 는 시각을 **실행하는 PC 의 시간대**로 내놓는다(KST 면 +09:00).
+# t0 는 README 대로 date -u 라 UTC 이므로, 바꾸지 않고 그대로 찍으면
+# t2 − t0 를 손으로 뺄 때 9시간 틀린다. 2026-10-22 창영님(B) 구역 1 시험에서
+# 실제로 +09:00 으로 찍히는 것을 확인했다 — !59(edge-availability.py)와 같은 원인.
+def utc(s):
+    if not s: return '-'
+    t = datetime.fromisoformat(str(s).replace('Z','+00:00'))
+    if not t.tzinfo: t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 m=json.load(sys.stdin).get('MetricAlarms',[])
-for x in m: print(f\"  경보 {x['AlarmName']:36s} {x['StateValue']:12s} 전이 {x.get('StateUpdatedTimestamp')}\")
+for x in m: print(f\"  경보 {x['AlarmName']:36s} {x['StateValue']:12s} 전이 {utc(x.get('StateUpdatedTimestamp'))}\")
 " 2>/dev/null
   done
 }
 
+# ── 🔴 어느 구역을 보고 있나 (창영님 제안 2026-10-22) ────────────
+# 스크립트가 구역을 확인하지 않는다 — 컨텍스트나 프로필이 다른 곳을 가리키면
+# **다른 계정의 경보·헬스체크를 읽는다.** 눈으로 보는 것만으로는 증거에 안 남아,
+# 판정 때 "이 값이 구역 1 것"이라는 근거가 없다. 그래서 파일에 찍어 둔다.
+whereami() {
+  local ctx acct arn
+  ctx=$(kubectl config current-context 2>/dev/null || echo "조회실패")
+  arn=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo "조회실패")
+  acct=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "조회실패")
+  printf '  어디냐: 컨텍스트=%s\n' "$ctx"
+  printf '           계정=%s  주체=%s\n' "$acct" "$arn"
+  printf '           AWS_PROFILE=%s  AWS_REGION=%s\n' "${AWS_PROFILE:-(없음)}" "${AWS_REGION:-${AWS_DEFAULT_REGION:-(없음)}}"
+  case "$acct" in
+    383344224073) printf '           → 시험 구역 1 ✅\n' ;;
+    926762923779) printf '           → 🔴 시험 구역 2 — 11a 대상이 아니다\n' ;;
+    379937169195) printf '           → 🔴🔴 운영이다. 11a 는 구역 1 에서만 한다. 멈추십시오\n' ;;
+    *)            printf '           → 🔴 모르는 계정 — 확인 필요\n' ;;
+  esac
+}
+
 snap() {
   hr; echo "[$(ts)]"; hr
+  whereami
   ext
   pods
   endpoints
@@ -154,8 +185,15 @@ for c in d['spec']['template']['spec']['containers']:
         --history-item-type StateUpdate --max-records 20 --output json 2>/dev/null \
         | python3 -c "
 import sys,json
+from datetime import datetime, timezone
+# 🔴 여기도 UTC 로 바꿔 찍는다 — t2 를 읽는 바로 그 줄이다(위 alarm_state 주석 참고)
+def utc(s):
+    if not s: return '-'
+    t = datetime.fromisoformat(str(s).replace('Z','+00:00'))
+    if not t.tzinfo: t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 for h in json.load(sys.stdin).get('AlarmHistoryItems',[]):
-    print(f\"  {h['Timestamp']}  {h['HistorySummary']}\")
+    print(f\"  {utc(h['Timestamp'])}  {h['HistorySummary']}\")
 " 2>&1 | tee -a "$OUT/05_경보이력.txt"
     done
     echo
