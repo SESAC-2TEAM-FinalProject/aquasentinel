@@ -23,6 +23,7 @@
 
 - Primary 찾기: `.status.currentPrimary` 또는 파드 라벨 `cnpg.io/instanceRole=primary`(`role=primary`도 붙음)
 - `kubectl cnpg` 플러그인 없이 쓰는 명령만 적었습니다
+- 🔴 **이 표에서 「같아야 하는 값」은 실패 쪽뿐입니다** — 성공 수(`archived_count`)와 `last_archived_wal`은 **계속 늘어나는 게 정상**이라 이 표와 달라도 이상이 아닙니다(작성 시점 2,617 → 10/23 04:1x 2,632). 볼 것은 **`failed_count`가 2에서 늘었는지**와 **`last_failed_wal`이 `00000006.history`(10/14 06:28:43)에서 바뀌었는지** 둘입니다. 늘었거나 바뀌었으면 1장으로
 
 ## 1. 경보가 왔을 때 — 어느 쪽인지 가르기
 
@@ -31,7 +32,10 @@
 | `CnpgWalArchivingFailing`(10분) | 마지막 실패가 마지막 성공보다 나중 — 아카이빙이 지금 실패 중 |
 | `CnpgWalArchivingStale`(5분) | 마지막 아카이빙이 30분 넘게 없음 |
 | `CnpgReplicaNotStreaming`(5분) | 레플리카가 스트리밍하지 않음 — (B)에서 같이 뜰 수 있음 |
-| (참고) `CnpgReplicationLagHigh` · `CnpgBackupFailed` · `CnpgBackupMissing` | 같은 묶음 경보 |
+| `CnpgMetricsAbsent`(10분) | 해당 인스턴스의 지표가 아예 안 올라옴 — **(B)에서 파드가 Ready로 못 돌아오면 같이 뜬다.** 이 경보만 단독이면 아카이빙이 아니라 수집 쪽을 먼저 본다 |
+| (참고) `CnpgReplicationLagHigh`(10분) · `CnpgBackupFailed` · `CnpgBackupMissing` | 같은 묶음 경보 |
+
+> 운영에 반영된 CNPG 경보는 **7개 전부** 위 표에 있습니다(10/23 `kubectl get prometheusrules -A` 전수 확인).
 
 **판별 순서**
 
@@ -57,20 +61,40 @@ aws s3 ls s3://aquasentinel-dev-observability-379937169195/cloudnativepg/aquasen
 # 비어 있으면 그대로 진행 / 있으면 2.2
 ```
 
-- 🔸 운영 버킷 목록 권한이 있는 계정으로(재희 계정 `aquasentinel-member-jaehee`는 `s3:ListBucket` 거부 — 이 절은 원주님 검수 때 실행 확인)
-- 10/23 기준 `cloudnativepg/` 아래는 `aquasentinel-pg/` 하나뿐 · 2,873 객체 · 약 3.00 GB(원주 조회)
+- 🔸 운영 버킷 목록 권한이 있는 계정으로(재희 계정 `aquasentinel-member-jaehee`는 `s3:ListBucket` 거부)
+- ✅ **두 줄 다 실행 확인**(원주 10/23 04:1x UTC) — `cloudnativepg/` 아래는 `aquasentinel-pg/` **하나뿐**, `base/` 목록도 정상(`20261013T011007` 외). 10/23 기준 2,873 객체 · 약 3.00 GB
 
 ### 2.2 있으면 — 둘 중 하나
 
-**(A-1) 비우기** — 옛 클러스터의 것만 지운다
+**(A-1) 비우기** — 경로를 비워서 새 클러스터가 쓸 수 있게 한다
+
+> 🔴 **「옛 것만 골라 지운다」가 아닙니다.** `base/` 는 systemID로 골라 지우지만 **`wals/` 는 통째로** 지웁니다(3번). 그래서 **새 클러스터를 만들기 전에만** 할 수 있습니다.
 
 1. 새로 만들 클러스터가 아직 없을 때만 한다(지금 클러스터의 백업을 지우면 시점 복구를 잃음)
 2. `base/<backupID>/backup.info`의 **`systemid`로 가른다** — 🔴 **날짜 기준으로 지우지 않는다**(10/13 창영님 조건)
    ```bash
    aws s3 cp s3://…/cloudnativepg/aquasentinel-pg/base/<backupID>/backup.info - | grep -i systemid
    ```
-3. 🔴 변경 — 옛 systemID의 `base/<backupID>/`와 그 WAL만 삭제(10/13 절차 — systemID 3개 정리)
-4. 도쿄 복제(`replicate-to-tokyo` · `DeleteMarkerReplication: Enabled`)로 **도쿄에서도 지워진다**는 점을 알고 한다
+3. 🔴 변경 — **삭제 대상은 세 가지입니다**(10/13에 실제로 지운 범위 · 원주 검수 10/23)
+
+   | # | 지울 것 | 왜 |
+   |---|---|---|
+   | 1 | 옛 systemID의 `base/<backupID>/` — **10/13에는 3개** | 2번에서 가른 것 |
+   | 2 | 🔴 **미완료 systemID의 `base/<backupID>/` — 10/13에는 2개** | 백업이 중간에 끊긴 것. `backup.info`가 없거나 불완전해 2번으로 안 갈리는데, **남아 있으면 안전검사에 그대로 걸립니다** |
+   | 3 | 🔴 **`wals/` 전체** | 아래 |
+
+   🔴 **`wals/`는 골라 지우지 않고 통째로 지웁니다.** 10/13에 그렇게 했습니다(개선안 v1 「옛 systemID 백업 3개 + 미완료 systemID 2개 + `wals/` 전체 삭제, 그날 성공 백업만 보존」).
+   - **왜 통째로인가**(🔸 이 설명은 해석입니다 — 실측은 「전체를 지웠다」까지) — WAL 파일 이름에는 systemID가 없어서 **목록만 보고는 어느 DB 것인지 못 가릅니다.** 골라 지우려다 몇 개 남기면 **안전검사에 똑같이 다시 걸립니다**
+   - **잃는 것** — 그 시점까지의 **시점 복구(PITR)**. 그래서 **1번 조건**(새 클러스터가 아직 없을 때만)이 반드시 먼저입니다
+   - **되찾는 것** — 새 클러스터를 만든 직후 **기준 백업 1회**(A-2 3번 명령)를 하면 그때부터 다시 쌓입니다. **이 백업을 빼먹으면 복구 지점이 없는 상태로 운영됩니다**
+
+4. 도쿄 복제(`replicate-to-tokyo`)로 **도쿄에서도 같이 지워질 수 있습니다** — 지우기 전에 알고 합니다
+   - 🔸 **미확인** — 재희님 초안의 `DeleteMarkerReplication: Enabled` 는 **Terraform 소스에서 근거를 못 찾았습니다**(10/23 원주 확인 · 프로바이더 바이너리만 매치). 10/13에 「도쿄 복제 반영까지 확인」한 기록은 있으나 설정값 자체는 미확인입니다
+   - 실제로 지우기 전에 한 번 확인하세요
+     ```bash
+     aws s3api get-bucket-replication --bucket aquasentinel-dev-observability-379937169195 \
+       --query 'ReplicationConfiguration.Rules[].{ID:ID,DeleteMarker:DeleteMarkerReplication.Status}'
+     ```
 
 **(A-2) 새 serverName** — 지우지 않고 새 경로로
 
@@ -116,7 +140,9 @@ aws s3 ls s3://aquasentinel-dev-observability-379937169195/cloudnativepg/aquasen
    kubectl -n aquasentinel-db delete pvc $X --wait=false
    kubectl -n aquasentinel-db delete pod $X
    ```
+   - 🔸 **어디까지가 10/12 실측인지**(원주 검수 10/23) — 10/12 기록(DR 계획서 2.3 · R5)에 남은 것은 **「PVC를 통째로 지우고 풀 재동기화」까지**입니다. **`delete pod` 는 그 기록에 없습니다** — PVC에 파드가 붙어 있으면 삭제가 `Terminating` 에서 멈추기 때문에 넣은 **보강 한 줄**이고, 10/12에 실제로 쳤는지는 확인되지 않았습니다. 순서대로 치면 어느 쪽이든 결과는 같습니다
    - CNPG는 새 인스턴스를 **다음 번호**로 만듭니다(예: `aquasentinel-pg-4`) — 이름이 바뀌는 것이 정상
+     - 🔸 **미확인** — CNPG 동작에 대한 서술이고 10/12 기록에는 새 인스턴스 이름이 안 남아 있습니다. 다음에 (B)를 실제로 겪으면 **이름을 기록해 이 줄을 확정**해 주세요
    - 그동안 인스턴스는 2개 — 쓰기는 계속됨(async 복제)
 5. 끝 확인 — `readyInstances` 3 · 새 인스턴스 streaming · `ContinuousArchiving=True` · 아카이버 실패 늘지 않음 · `CnpgReplicaNotStreaming` 해소
 6. 기록 — 전환 시각 · 지운 인스턴스 · 새 인스턴스 이름 · 재동기화 걸린 시간 · 판정 창이면 대장 2-4장(창 안 운영 변경)
@@ -138,9 +164,32 @@ aws s3 ls s3://aquasentinel-dev-observability-379937169195/cloudnativepg/aquasen
 | 날짜로 백업 지우기 | 하지 않음 — systemID로만 |
 | 기존 PDF 런북(`AquaSentinel_DR_페일오버_런북_팀공유용.pdf`, 10/01) | 이 두 절차가 없음 — 런북 갱신 때 이 문서를 합침(원주) |
 
-## 6. 검수 때 볼 것 (A)
+## 6. 검수 결과 (A · 2026-10-23 04:1x UTC)
 
-- 2.1 · 2.2 S3 명령 — 재희 계정으로 실행 확인 못 함(목록 · 읽기 권한 없음)
-- 2.2 (A-1) 3번 삭제 범위 — 10/13 실제 절차와 같은지
-- 3장 4번 — 10/12 실제로 한 명령과 같은지(PVC만 지웠는지 · 파드도 지웠는지)
-- 2.2 (A-2) 기준 백업 명령 — 지금 정기 백업(ScheduledBackup)과 같은 방식인지
+| # | 재희님이 봐 달라고 한 것 | 결과 |
+|---|---|---|
+| 1 | 2.1 · 2.2 S3 명령 — 실행 확인 | ✅ **됩니다.** 2.1에 결과 반영 |
+| 2 | 2.2 (A-1) 3번 삭제 범위 | 🔴 **고쳤습니다** — 실제 10/13은 **미완료 systemID 2개 + `wals/` 전체**도 지웠습니다. 둘이 빠져 있었습니다 |
+| 3 | 3장 4번 — 10/12 실제 명령 | ⚠️ **PVC는 맞고 `delete pod` 는 기록에 없습니다.** 지우지 않고 **「보강 한 줄」로 표기 분리**했습니다 |
+| 4 | 2.2 (A-2) 기준 백업 방식 | ✅ **맞습니다.** ScheduledBackup `aquasentinel-pg-backup` = `method: plugin` · `barman-cloud.cloudnative-pg.io` — 매니페스트와 같은 방식 |
+
+**검수에서 추가로 고친 것 2건**
+
+| 무엇 | 내용 |
+|---|---|
+| 1장 경보표 | `CnpgMetricsAbsent`(10분) **누락** → 추가. 운영 CNPG 경보 **7개 전수** 반영 |
+| 0장 기준값 | 성공 수는 늘어나는 게 정상인데 고정값으로 읽혀 **오해 소지** → 「볼 것은 실패 쪽」 주석 추가 |
+
+**남은 미확인 2건**(둘 다 머지를 막지 않음 · 해당 절에 🔸로 표기)
+
+- `DeleteMarkerReplication: Enabled` — Terraform 소스에 근거 없음. 실제 삭제 전 조회 명령을 2.2 4번에 넣어 둠
+- (B) 뒤 새 인스턴스가 **다음 번호**로 생기는지 — 다음에 실제로 겪으면 이름을 기록해 확정
+
+---
+
+### 이력
+
+| 언제 | 누가 | 무엇 |
+|---|---|---|
+| 2026-10-23 | C(재희) | 초안 작성 · 라이브 조회 반영 |
+| 2026-10-23 | A(원주) | 검수 — 위 4건 답 + 2건 추가 수정 |
