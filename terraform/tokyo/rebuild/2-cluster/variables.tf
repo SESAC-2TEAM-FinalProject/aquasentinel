@@ -55,24 +55,39 @@ variable "node_instance_types" {
   default = ["t3.large"]
 }
 
+# 🔴 서울과 같은 「온디맨드 고정 3대」 구조로 맞춘다(2026-10-25).
+# seoul/rebuild/2-cluster/variables.tf 가 ON_DEMAND · 3/3/3 이고, 노드가 2a/2b/2c 에
+# 하나씩 앉아 CNPG 3개도 AZ 하나씩 앉는다(2026-10-24 운영 실측으로 확인).
+#
+# 왜 SPOT 2대에서 바꾸는가 —
+#  1) AZ: 3 AZ 로 늘려도 **노드가 2대면 노드가 있는 AZ 가 2개**라 CNPG 3번째
+#     인스턴스가 여전히 Pending 이다(cluster.yaml 이 AZ 당 1개를 강제). AZ 3개와
+#     노드 3대는 한 묶음이다.
+#  2) SPOT: 서울에서 grading 이 스팟 회수마다 죽어(하루 약 5회) 2026-10-23~24 에
+#     스팟을 0대까지 없앴다(SIM-14 · ⑤ 관문 6/6). DR 대기 리전이 스팟이면 실제
+#     전환 시점에 회수가 겹칠 수 있어 같은 교훈을 적용한다.
+#  3) max 를 3 으로 묶는 것도 서울과 같다 — 스테이트풀 전용 고정 노드그룹이라
+#     ASG 가 임의로 늘리지 않게 한다. 🔴 단 도쿄엔 Karpenter 가 없어(「도쿄 반영
+#     목록」 #3) 일반 워크로드용 자동 증설 경로가 없다 — 용량이 모자라면 이 값을
+#     올려야 한다. 2026-10-24 계산으로는 3대에서 CPU 54% · MEM 49% 로 여유가 있다.
 variable "node_capacity_type" {
   type    = string
-  default = "SPOT"
+  default = "ON_DEMAND"
 }
 
 variable "node_desired_size" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "node_min_size" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "node_max_size" {
   type    = number
-  default = 4
+  default = 3
 }
 
 variable "enable_prefix_delegation" {
