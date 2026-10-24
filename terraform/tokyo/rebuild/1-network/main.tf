@@ -42,10 +42,19 @@ provider "aws" {
 module "network" {
   source = "../../../modules/aws-network"
 
-  project_name       = var.project_name
-  environment        = var.environment
-  region             = var.region
-  availability_zones = var.availability_zones
+  project_name = var.project_name
+  environment  = var.environment
+  region       = var.region
+
+  # 3 AZ + 도쿄 전용 CIDR(10.1.0.0/16) — 2026-10-25. 모듈 기본값은 AZ 2개 ·
+  # 10.0.x 전제라 네 개를 다 넘겨야 한다(variables.tf 주석 참고). 서울
+  # 1-network/main.tf 와 같은 형태이고, 값만 10.1 대역이다.
+  availability_zones        = var.availability_zones
+  vpc_cidr                  = var.vpc_cidr
+  public_subnet_cidrs       = var.public_subnet_cidrs
+  private_app_subnet_cidrs  = var.private_app_subnet_cidrs
+  private_data_subnet_cidrs = var.private_data_subnet_cidrs
+
   single_nat_gateway = var.single_nat_gateway
   eks_cluster_name   = var.eks_cluster_name
 }
