@@ -77,6 +77,35 @@ module "eks" {
   node_min_size       = var.node_min_size
   node_max_size       = var.node_max_size
 
+  # 스테이트풀 전용 고정 노드그룹 — 서울(seoul/rebuild/2-cluster/main.tf)과 같은
+  # 라벨/taint 키·값을 쓴다. 서울 쪽 주석이 이유를 적어 뒀다: 카펜터 stateful
+  # NodePool이 쓰던 키를 재사용해서 "워크로드 매니페스트(nodeSelector/tolerations)를
+  # 건드릴 필요가 없게" 한 것이다.
+  #
+  # 🔴 도쿄에만 이 두 블록이 없었다(2026-10-24 구축 전 검토에서 발견). 모듈 기본값이
+  # node_labels = {} · node_taints = [] 라서(modules/aws-eks/variables.tf) 도쿄 노드에는
+  # 라벨이 아예 붙지 않는데, gitops manifests/ 는 두 리전 공용이고 그 안에 nodeSelector
+  # aquasentinel.io/nodepool=stateful 이 걸린 워크로드가 23개다(gitlab/main 전수):
+  # Cluster/aquasentinel-pg(DB) · Keycloak 2 · web 4(status-svc·web-frontend·
+  # alert-worker·ocean-fetch) · api-module 14 · egress-proxy · redis-exporter.
+  # 즉 이게 없으면 apply 는 성공하는데 그 23개가 전부 Pending 으로 남아 빈 클러스터가
+  # 된다 — 에러가 나지 않아 더 늦게 발견된다.
+  #
+  # taint 는 Pending 해소에 필수는 아니다(라벨만 있어도 nodeSelector 는 통과하고,
+  # toleration 은 taint 가 없어도 무해하다). 그래도 서울과 같은 구조로 둔다 — 모듈이
+  # 애드온 toleration 을 var.node_taints 에서 파생시키므로(modules/aws-eks/main.tf:16~30)
+  # 둘을 짝으로 두는 것이 설계 의도다.
+  node_labels = {
+    "aquasentinel.io/nodepool" = "stateful"
+  }
+  node_taints = [
+    {
+      key    = "dedicated"
+      value  = "stateful"
+      effect = "NO_SCHEDULE"
+    }
+  ]
+
   enable_prefix_delegation = var.enable_prefix_delegation
   enable_network_policy    = var.enable_network_policy
   max_pods_per_node        = var.max_pods_per_node
