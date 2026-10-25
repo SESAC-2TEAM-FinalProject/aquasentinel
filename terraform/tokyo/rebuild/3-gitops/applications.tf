@@ -368,6 +368,35 @@ locals {
             }
           ])
         },
+        # 🔴 (2026-10-25) DB 접속 시크릿 이름을 이 리전 것으로 바꾼다.
+        #
+        # gitops 의 manifests/web/external-secret.yaml 은 `aquasentinel-dev-api-module-
+        # database-*` 를 하드코딩한다. 두 리전 공용 매니페스트인데 Secrets Manager
+        # 이름은 리전별로 다르다 — 도쿄에는 `aquasentinel-dr-tokyo-api-module-
+        # database-*` 로 들어가 있다(값은 이미 다 있다). 그대로 두면 ESO 가
+        # 서울 이름을 찾다가 실패한다:
+        #
+        #     SecretSyncedError — err: Secret does not exist
+        #     key: aquasentinel-dev-api-module-database-username
+        #
+        # 그러면 web/aquasentinel-pg-app Secret 이 안 생기고, 그걸 env 로 받는
+        # status-svc(2벌) · alert-worker · grafana 가 CreateContainerConfigError 로
+        # 영원히 못 뜬다. 2026-10-25 도쿄 최초 기동에서 실제로 그랬다.
+        #
+        # 같은 치환을 `api-module-db-secret` 쪽은 이미 하고 있다(이 파일 위쪽) —
+        # 거기만 있고 여기가 빠져 있었다. 필드는 3개뿐이고(username·password·
+        # dbname) 순서도 매니페스트 그대로다. 🔴 매니페스트의 data 순서가 바뀌면
+        # 이 인덱스도 같이 고쳐야 한다(api-module 쪽과 같은 제약).
+        {
+          target = { kind = "ExternalSecret", name = "aquasentinel-pg-app" }
+          patch = jsonencode([
+            for i, field in ["username", "password", "dbname"] : {
+              op    = "replace"
+              path  = "/spec/data/${i}/remoteRef/key"
+              value = "${local.name_prefix}-api-module-database-${field}"
+            }
+          ])
+        },
       ]
     }
 
