@@ -206,15 +206,57 @@ locals {
       path      = "manifests/api-module/db-secret"
       namespace = "api-module"
       patches = [
+        # 🔴🔴 평상시 도쿄에서는 이 PushSecret 을 **리소스째 제거한다** —
+        # 2026-10-01 팀 결정의 복원(2026-10-25 재적용). Keycloak·status-svc 와
+        # 같은 누락 경로다(`environments/aws-tokyo-dr/` → `tokyo/rebuild/` 재편 때
+        # 안 옮겨졌다).
+        #
+        # 🔴 **왜 끄는 것이 맞는가**: 이 PushSecret 은 `aquasentinel-db` 의
+        # `aquasentinel-pg-app` Secret 을 읽어 Secrets Manager 로 밀어 넣는다.
+        # 그런데 **Replica Cluster 는 app 사용자를 만들지 않으므로**(소스를 그대로
+        # 따라간다) CNPG 가 그 Secret 을 **애초에 생성하지 않는다** —
+        # 2026-10-25 실측: 서울 `aquasentinel-pg-app` 11키 ·
+        # `ownerReferences: kind=Cluster` / 🔴 도쿄 **NotFound**.
+        # 그래서 source 가 없어 영구 실패한다:
+        #
+        #     PushSecret api-module-database  Errored
+        #     Ready=False: could not get source secret
+        #
+        # 🔴 Keycloak 의 `instances` 처럼 **끄는 스위치가 PushSecret 에는 없어서**
+        # 2026-10-01 에 "리소스 자체를 제거" 로 정했다. JSON Patch 로는 리소스를
+        # 지울 수 없으므로 strategic merge 의 `$patch: delete` 를 쓴다.
+        #
+        # 🔴 **승격(DR 전환) 때는 이 패치를 지우고 아래 주석의 키 치환 패치를
+        # 되살린다** — 런북 ③단계. 승격 후에는 CNPG 가 app 사용자를 관리하게 되어
+        # Secret 이 생기고, 그때 remoteKey 를 도쿄 이름으로 바꿔 줘야 한다.
+        # 삭제 패치와 키 치환 패치는 **공존할 수 없다**(없는 리소스에 JSON Patch 를
+        # 걸면 Kustomize 가 "no matches for target" 으로 실패한다) — 그래서 원본을
+        # 지우지 않고 아래에 그대로 남겨 둔다:
+        #
+        #     {
+        #       target = { kind = "PushSecret", name = "api-module-database" }
+        #       patch = jsonencode([
+        #         for i, field in ["username", "password", "host", "port", "dbname"] : {
+        #           op    = "replace"
+        #           path  = "/spec/data/${i}/match/remoteRef/remoteKey"
+        #           value = "${local.name_prefix}-api-module-database-${field}"
+        #         }
+        #       ])
+        #     },
+        #
+        # 🔴 metadata.namespace 는 `aquasentinel-db` 다(이 Application 의 destination
+        # 은 `api-module` 이지만 PushSecret 매니페스트가 자기 namespace 를 명시한다 —
+        # manifests/api-module/db-secret/push-secret.yaml).
         {
           target = { kind = "PushSecret", name = "api-module-database" }
-          patch = jsonencode([
-            for i, field in ["username", "password", "host", "port", "dbname"] : {
-              op    = "replace"
-              path  = "/spec/data/${i}/match/remoteRef/remoteKey"
-              value = "${local.name_prefix}-api-module-database-${field}"
-            }
-          ])
+          patch  = <<-EOT
+            apiVersion: external-secrets.io/v1alpha1
+            kind: PushSecret
+            metadata:
+              name: api-module-database
+              namespace: aquasentinel-db
+            $patch: delete
+          EOT
         },
         {
           target = { kind = "ExternalSecret", name = "api-module-database" }
@@ -339,6 +381,37 @@ locals {
             { op = "replace", path = "/spec/data/0/remoteRef/key", value = "${local.name_prefix}-grafana-oidc-client-secret" }
           ])
         },
+        # 🔴🔴 평상시 도쿄 Keycloak 은 **꺼 둔다** — 2026-10-01 팀 결정의 복원
+        # (2026-10-25 재적용).
+        #
+        # 도쿄 CNPG 는 Replica Cluster(`spec.replica.enabled = true`)라
+        # `pg_is_in_recovery() = true` · `transaction_read_only = on` 으로 **항상**
+        # 떠 있다(2026-10-25 도쿄 DB 에 직접 질의해 재확인). Keycloak 은 기동할 때
+        # 스키마를 만들고 써야 하므로 이 상태에서는 **구조적으로 뜰 수 없다**:
+        #
+        #     Caused by: org.postgresql.util.PSQLException:
+        #       Could not find a server with specified targetServerType: primary
+        #
+        # 🔴 그래서 2026-10-01 에 **"평상시 도쿄 Keycloak 은 instances=0 으로
+        # 꺼둔다"** 로 결정했다. 그런데 그 패치는 당시
+        # `environments/aws-tokyo-dr/gitops/main.tf` 에 있었고, 도쿄 구성이
+        # `tokyo/rebuild/*` 로 재편될 때 **옮겨지지 않았다.** 도쿄를 그 뒤로 한 번도
+        # 띄우지 않아 24일간 드러나지 않았고, 2026-10-25 최초 기동에서
+        # CrashLoopBackOff(18회 재시작 / 82분)로 나타났다.
+        #
+        # 🔴 **승격(DR 전환) 때는 이 패치를 지운다** — 런북 순서는
+        # ① Cluster `replica.enabled: true→false`(승격) ② 이 패치 제거(instances 복원)
+        # ③ api-module-db-secret 의 PushSecret 삭제 패치 제거
+        # ④ Route53 확인(자동) ⑤ app·keycloak 비밀번호를 복구된 DB 값과 맞추기
+        # ⑥ 이미지 주소를 도쿄 ECR 로 전환.
+        #
+        # 🔴 서울에는 이 패치가 없다(그쪽이 Primary 라 instances=1 이 정상).
+        {
+          target = { kind = "Keycloak", name = "aquasentinel-keycloak" }
+          patch = jsonencode([
+            { op = "replace", path = "/spec/instances", value = 0 }
+          ])
+        },
       ]
     }
     # 대시보드(웹 서비스) HTTPRoute — keycloak과 같은 이유로 실제 도메인을
@@ -396,6 +469,58 @@ locals {
               value = "${local.name_prefix}-api-module-database-${field}"
             }
           ])
+        },
+        # 🔴🔴 평상시 도쿄 status-svc 는 **0벌로 꺼 둔다** — 2026-10-01 팀 결정의
+        # 복원(2026-10-25 재적용). Keycloak(위) 과 같은 사유·같은 누락 경로다.
+        #
+        # 🔴 이쪽은 Keycloak 보다 **더 늦게 발견되는 형태**라 결정이 필요했다 —
+        # `app/backend/status-svc/app/main.py` 의 `/readyz` 는 `db.ro()`(읽기 전용)
+        # 만 확인하고 `db.rw()` 는 보지 않는다(2026-10-25 코드 재확인):
+        #
+        #     with db.ro().connect() as c: c.execute(text("select 1"))
+        #
+        # 즉 읽기 전용 Replica Cluster 에서도 이 프로브는 **"ready" 를 반환**하고,
+        # `POST /api/farms` · `PATCH /api/farms/{id}` 같은 **쓰기 요청만 조용히
+        # 500 으로 실패**한다. 파드가 아예 안 뜨는 Keycloak 과 달리 "떠 있는데
+        # 쓰기만 깨짐" 이라 눈에 안 띈다. 🔴 **앱 코드는 고치지 않고**(웹팀 레포는
+        # 태그로 고정 · `handoff/` 불변 원칙) 도쿄에서만 끄는 것으로 정했다.
+        #
+        # 🔴 **ScaledObject 를 함께 지워야 한다** — status-svc 는 Rollout 이고
+        # KEDA ScaledObject(`minReplicaCount: 2` · `fallback.replicas: 2`)가 그
+        # Rollout 을 대상으로 삼는다. replicas 만 0 으로 바꾸면 **KEDA 가 만든 HPA 가
+        # 곧바로 2벌로 되돌린다**(지표를 못 읽어도 fallback 2벌). 둘을 같이 처리해야
+        # 실제로 꺼진다.
+        #
+        # 🔴 `op = "add"` 인 이유: `manifests/web/status-svc-rollout.yaml` 에는
+        # `spec.replicas` 가 **없다**(KEDA 가 스케일을 쥐고 있어서). 경로가 없으면
+        # `replace` 는 실패하므로 `add` 로 새로 넣는다.
+        #
+        # PDB `status-svc`(`minAvailable: 1`)는 그대로 둔다 — 대상 파드가 0개면
+        # 축출 제어할 것이 없어 무효이고, 승격 때 복원하면 바로 다시 유효해진다.
+        #
+        # 🔴 **승격(DR 전환) 때는 아래 두 패치를 지운다** — Keycloak 주석의 런북
+        # ②단계와 같은 타이밍이다.
+        {
+          target = { kind = "Rollout", name = "status-svc" }
+          patch = jsonencode([
+            { op = "add", path = "/spec/replicas", value = 0 }
+          ])
+        },
+        # 🔴 리소스 **자체를 없애는** 패치라 JSON Patch(op/path/value)가 아니라
+        # strategic merge 의 `$patch: delete` 를 쓴다 — JSON Patch 로는 필드만
+        # 지울 수 있고 리소스를 지울 수 없다. Kustomize 가 렌더링 단계에서 빼므로
+        # Argo 는 이 리소스를 아예 받지 않고, `prune: true` 라 이미 있던 것은
+        # 삭제된다. (`api-module-db-secret` 의 PushSecret 도 같은 방식이다.)
+        {
+          target = { kind = "ScaledObject", name = "status-svc" }
+          patch  = <<-EOT
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+            metadata:
+              name: status-svc
+              namespace: web
+            $patch: delete
+          EOT
         },
       ]
     }
