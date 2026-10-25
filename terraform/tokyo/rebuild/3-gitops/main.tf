@@ -71,6 +71,36 @@ locals {
 
   gitops_pat_secret_name = "${local.name_prefix}-argocd-gitops-token"
   gitops_repo_url        = "https://gitlab.com/sesac-2team-finalproject/aquasentinel-gitops.git" # GitHub→GitLab 전환(2026-10-11)
+
+  # 🔴 CI 러너 이미지에는 kubectl 이 없다 (2026-10-25 발견).
+  #
+  # `.gitlab-ci.yml` 의 terraform 잡은 `hashicorp/terraform:${TF_VERSION}` 로 도는데
+  # 그 이미지(알파인 기반)에 kubectl 바이너리가 없다. local-exec 로 kubectl 을 쓰는
+  # null_resource 두 개(bootstrap.tf 의 wait_for_api_module_namespace,
+  # applications.tf 의 restart_lbc_for_gateway_api)가 전부 여기에 걸린다:
+  #
+  #     /bin/sh: kubectl: not found
+  #     TIMEOUT: api-module namespace not found after 5m
+  #
+  # 🔴 왜 서울에서는 안 드러났나 — 두 리소스 모두 **2026-10-14 수정 이전**에
+  # 생성됐고, 그때는 `rm -f` 가 마지막 줄이라 kubectl 실패가 exit 0 으로 가려져
+  # "성공"으로 state 에 기록됐다(그 수정의 주석이 지적한 바로 그 버그). null_resource
+  # 는 triggers 가 없으면 재실행되지 않아 이후 apply 에서도 다시 돌지 않았다.
+  # **도쿄가 최초 적용이라 처음으로 제대로 실패했다.** 즉 이 두 동작은 지금까지
+  # 한 번도 실제로 수행된 적이 없다(서울 LBC 재시작 포함 — 「도쿄 반영 목록」에 기록).
+  #
+  # 해결은 명령 안에서 kubectl 을 확보하는 것으로 좁힌다. CI 이미지를 바꾸면
+  # 서울 apply 경로까지 영향을 받는데, 판정 창(2026-10-22~11-10) 중에는 운영
+  # 파이프라인을 건드리지 않는다는 원칙이 있다. 알파인 패키지를 먼저 시도하고,
+  # 저장소에 없으면 공식 바이너리를 내려받는다(클러스터가 1.31 이라 같은 마이너).
+  ensure_kubectl = <<-EOT
+    if ! command -v kubectl >/dev/null 2>&1; then
+      apk add --no-cache kubectl >/dev/null 2>&1 \
+        || { wget -qO /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl" \
+             && chmod +x /usr/local/bin/kubectl; }
+    fi
+    command -v kubectl >/dev/null 2>&1 || { echo "kubectl 을 준비하지 못했다" >&2; exit 1; }
+  EOT
 }
 
 data "terraform_remote_state" "cluster" {

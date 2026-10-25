@@ -16,15 +16,30 @@ resource "null_resource" "wait_for_api_module_namespace" {
   # 전부 실패해도 항상 exit 0으로 끝나 타임아웃이 가려진다 — 종료 코드를 명시적으로
   # 판정한다. 도쿄는 아직 한 번도 실제 적용된 적 없어서 최초 기동 때 이 버그가
   # 그대로 재현될 뻔했다(회신 문서 Q9 참고).
+  #
+  # 🔴 (2026-10-25) 그 "재현될 뻔했다"가 실제로 재현됐다 — 09:51Z 에
+  # `/bin/sh: kubectl: not found` 로 60회가 전부 실패하고 5분 뒤 타임아웃했다.
+  # 위 수정 덕분에 **가려지지 않고 제대로 실패한** 것이다. kubectl 확보 경위는
+  # main.tf 의 local.ensure_kubectl 주석이 본문이다.
+  #
+  # 접속 정보는 environment 로 넘긴다 — 전에는 토큰이 명령줄에 그대로 들어가
+  # **CI 로그에 평문으로 찍혔다**(2026-10-25 job #17446824918 로그 5440 줄에서 확인).
+  # EKS 토큰은 15분짜리지만 로그는 남는다.
   provisioner "local-exec" {
+    environment = {
+      K8S_SERVER = data.terraform_remote_state.cluster.outputs.cluster_endpoint
+      K8S_CA_B64 = data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data
+      K8S_TOKEN  = data.aws_eks_cluster_auth.this.token
+    }
     command = <<-EOT
+      ${local.ensure_kubectl}
       CA_FILE=$(mktemp)
-      echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
+      echo "$K8S_CA_B64" | base64 -d > "$CA_FILE"
       for i in $(seq 1 60); do
-        kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get namespace api-module >/dev/null 2>&1 && break
+        kubectl --server="$K8S_SERVER" --certificate-authority="$CA_FILE" --token="$K8S_TOKEN" get namespace api-module >/dev/null 2>&1 && break
         sleep 5
       done
-      kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} get namespace api-module
+      kubectl --server="$K8S_SERVER" --certificate-authority="$CA_FILE" --token="$K8S_TOKEN" get namespace api-module
       STATUS=$?
       rm -f "$CA_FILE"
       if [ "$STATUS" -ne 0 ]; then

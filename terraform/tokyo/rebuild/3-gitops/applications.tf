@@ -999,11 +999,21 @@ resource "null_resource" "restart_lbc_for_gateway_api" {
   depends_on = [time_sleep.wait_for_lbc_bootstrap]
 
   # (2026-10-14, 서울과 동일 수정) rm -f가 마지막 줄이면 kubectl 실패가 가려진다.
+  #
+  # 🔴 (2026-10-25) 이 리소스도 같은 이유로 tainted 가 됐다 — CI 러너 이미지에
+  # kubectl 이 없다. 경위와 해결은 main.tf 의 local.ensure_kubectl 주석 참고.
+  # 접속 정보를 environment 로 옮긴 이유(토큰 로그 노출)도 같은 곳에 적어 두었다.
   provisioner "local-exec" {
+    environment = {
+      K8S_SERVER = data.terraform_remote_state.cluster.outputs.cluster_endpoint
+      K8S_CA_B64 = data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data
+      K8S_TOKEN  = data.aws_eks_cluster_auth.this.token
+    }
     command = <<-EOT
+      ${local.ensure_kubectl}
       CA_FILE=$(mktemp)
-      echo "${data.terraform_remote_state.cluster.outputs.cluster_certificate_authority_data}" | base64 -d > "$CA_FILE"
-      kubectl --server=${data.terraform_remote_state.cluster.outputs.cluster_endpoint} --certificate-authority="$CA_FILE" --token=${data.aws_eks_cluster_auth.this.token} -n kube-system rollout restart deployment aws-load-balancer-controller
+      echo "$K8S_CA_B64" | base64 -d > "$CA_FILE"
+      kubectl --server="$K8S_SERVER" --certificate-authority="$CA_FILE" --token="$K8S_TOKEN" -n kube-system rollout restart deployment aws-load-balancer-controller
       STATUS=$?
       rm -f "$CA_FILE"
       exit $STATUS
