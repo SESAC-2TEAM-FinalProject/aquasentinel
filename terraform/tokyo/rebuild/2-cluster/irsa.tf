@@ -165,10 +165,22 @@ data "aws_iam_policy_document" "cloudnativepg_access" {
     resources = [local.persistent.bucket_arns["observability"]]
   }
 
+  # 🔴 (2026-10-25) 도쿄가 **쓰는** 경로는 복제본과 갈라져 있다 — 근거는
+  # tokyo/persistent/main.tf 의 cloudnativepg_write_prefix 주석이 본문이다.
   statement {
     sid       = "ReadWriteOwnPrefix"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${local.persistent.bucket_arns["observability"]}/${local.persistent.cloudnativepg_write_prefix}*"]
+  }
+
+  # 서울 백업의 복제본(`replicate-to-tokyo` 규칙이 넣는 자리) — **읽기 전용**이다.
+  # 복제가 계속 덮어쓰는 경로라 도쿄가 여기에 쓰면 안 된다. 복구(bootstrap.recovery)
+  # 가 이 경로를 읽는다.
+  statement {
+    sid       = "ReadReplicatedPrefix"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
     resources = ["${local.persistent.bucket_arns["observability"]}/${local.persistent.cloudnativepg_prefix}*"]
   }
 

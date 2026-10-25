@@ -20,8 +20,36 @@ locals {
             }
           ])
         },
+        # 🔴 (2026-10-25) 도쿄가 **쓰는** 경로 — 복제본과 갈라 둔 write prefix 다.
+        # 전에는 아래 seoul-source 와 같은 `cloudnativepg/` 였고, 그 자리에 서울
+        # 백업 복제본이 계속 쌓여서 CNPG 의 "아카이브가 비어 있어야 한다" 검사에
+        # 영구히 걸렸다. 근거는 tokyo/persistent/main.tf 의 해당 local 주석.
         {
           target = { kind = "ObjectStore", name = "aquasentinel-backup-store" }
+          patch = jsonencode([
+            {
+              op    = "replace"
+              path  = "/spec/configuration/destinationPath"
+              value = "s3://${data.terraform_remote_state.persistent.outputs.bucket_names["observability"]}/${data.terraform_remote_state.persistent.outputs.cloudnativepg_write_prefix}"
+            }
+          ])
+        },
+        # 🔴 (2026-10-25) 복구 소스를 **도쿄 버킷의 복제본**으로 돌린다.
+        #
+        # gitops 의 object-store-seoul-source.yaml 은 서울 버킷을 가리킨다. 그대로
+        # 두면 도쿄 복구가 **서울 S3 를 읽어야만** 성립하는데, 그건 서울 리전이
+        # 살아 있을 때 이야기다 — 리전 장애로 서울이 통째로 빠지면 읽을 소스가
+        # 없어 DR 이 가장 필요한 순간에 복구가 안 된다.
+        #
+        # 서울 observability 버킷에는 `replicate-to-tokyo` 복제 규칙이 걸려 있어
+        # 같은 키가 도쿄 버킷에 들어와 있다. persistent 의 cloudnativepg_prefix 를
+        # "서울과 반드시 같은 값"으로 맞춰 둔 것도 이 복제본을 읽기 위한 설계였다
+        # (그 local 주석). 구현만 서울 버킷을 보고 있어 의도와 어긋나 있었다.
+        #
+        # RPO 는 S3 복제 지연(보통 분 단위)에 좌우된다 — 서울 버킷 직접 읽기보다
+        # 약간 뒤처진 시점으로 복구된다는 뜻이다.
+        {
+          target = { kind = "ObjectStore", name = "aquasentinel-pg-seoul-source" }
           patch = jsonencode([
             {
               op    = "replace"
