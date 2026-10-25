@@ -467,6 +467,18 @@ locals {
         requests:
           cpu: 25m
           memory: 230Mi
+      # 🔴 2026-10-25 추가 — 2-cluster 가 node_labels·node_taints 를 넘기게 되면서
+      # 도쿄 노드 3대가 전부 `aquasentinel.io/nodepool=stateful` 라벨 +
+      # `dedicated=stateful:NoSchedule` taint 를 갖는다. 이전 전제("도쿄엔 라벨도
+      # taint 도 없다")가 뒤집혀서, 이제는 **toleration 이 없는 쪽이 Pending** 이다.
+      # 서울 loki_values 와 같은 값이다(그쪽 주석이 왜 온디맨드 고정 노드인지 설명).
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
 
     # (2026-10-20 리전 대조) loki-canary 도 서울과 같은 값.
     # tolerations 는 넣는다 — 이건 키 없는 `operator: Exists` 라 **특정 노드 라벨에
@@ -569,6 +581,14 @@ locals {
           requests:
             cpu: 5m
             memory: 200Mi
+        # 🔴 2026-10-25 추가 — 노드 taint 대응(이 파일 loki singleBinary 주석 참고).
+        nodeSelector:
+          aquasentinel.io/nodepool: stateful
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: stateful
+            effect: NoSchedule
         # 기본값(OnNamespace)이면 AlertmanagerConfig가 자기 네임스페이스 알림만
         # 받는다 — monitoring에 둔 라우팅 트리(gitops manifests/alerting)가 web·
         # api-module·aquasentinel-db·nats 알림과, 네임스페이스 라벨이 없는 노드
@@ -607,6 +627,14 @@ locals {
           requests:
             cpu: 60m
             memory: 950Mi
+        # 🔴 2026-10-25 추가 — 노드 taint 대응(이 파일 loki singleBinary 주석 참고).
+        nodeSelector:
+          aquasentinel.io/nodepool: stateful
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: stateful
+            effect: NoSchedule
 
         podMonitorSelectorNilUsesHelmValues: false
         serviceMonitorSelectorNilUsesHelmValues: false
@@ -626,6 +654,48 @@ locals {
             existingSecret:
               name: thanos-objstore-config
               key: object-store.yaml
+
+    # 🔴 2026-10-25 신설 — 도쿄에는 이 두 키가 아예 없었다. 노드 taint 가 생긴
+    # 지금은 둘 다 필수다(이 파일 loki singleBinary 주석 참고).
+    #
+    # Argo CD 차트에서 global 로 닫은 것(bootstrap.tf)과 **같은 부류**지만, 이
+    # 차트에는 컴포넌트 전체에 걸리는 global 스케줄링 키가 없어 컴포넌트별로 적는다
+    # (서울 kube_prometheus_stack_values 의 같은 주석).
+    #
+    # 🔴 admissionWebhooks.patch 는 **설치 때 도는 Job 두 개** 몫이다 — 여기가
+    # 비면 차트 설치 자체가 Job Pending 으로 멈춘다(Argo CD 의 redisSecretInit 이
+    # 09:07Z 에 그렇게 멈췄던 것과 같은 모양).
+    #
+    # 서울에는 prometheusOperator 에 `affinity.nodeAffinity`(예비 풀 stateful-spare
+    # 차단)도 붙어 있으나 **도쿄에는 옮기지 않는다** — 도쿄엔 카펜터도 예비 풀도
+    # 없어서 가리킬 대상이 없다. 도쿄에 노드풀이 늘어나면 그때 같이 들여온다.
+    prometheusOperator:
+      admissionWebhooks:
+        patch:
+          nodeSelector:
+            aquasentinel.io/nodepool: stateful
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: stateful
+              effect: NoSchedule
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
+
+    # kube-state-metrics 는 판정 목표 #2·#3 을 **재는 수단**이라 서울에서도
+    # nodeSelector(필수)로 고정했다. 도쿄는 아직 재는 대상이 아니지만, 리전 간
+    # 설정 드리프트를 만들지 않기 위해 같은 값을 쓴다.
+    kube-state-metrics:
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
   EOT
 }
 
@@ -702,6 +772,16 @@ locals {
           matchLabels:
             app.kubernetes.io/name: aws-load-balancer-controller
             app.kubernetes.io/instance: aws-load-balancer-controller
+
+    # 🔴 2026-10-25 추가 — 노드 taint 대응(이 파일 loki singleBinary 주석 참고).
+    # 위 hostname 분산이 `DoNotSchedule` 이라 2벌이 서로 다른 노드에 앉아야 하는데,
+    # toleration 이 없으면 **앉을 수 있는 노드가 0 대**라 둘 다 Pending 이다.
+    # nodeSelector 는 서울에도 없어 넣지 않는다(서울은 affinity 로 예비 풀만 차단).
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: stateful
+        effect: NoSchedule
   EOT
 }
 
@@ -772,15 +852,19 @@ locals {
         cpu: 5m
         memory: 170Mi
 
-    # nodeSelector 를 **일부러 넣지 않는다**(2026-10-19 정정). 서울 값을 그대로
-    # 복사했다가(79c2312, 2026-10-16) `aquasentinel.io/nodepool: stateful` 이
-    # 들어가 있었는데, **도쿄 2-cluster 는 node_labels 를 넘기지 않아** 그 라벨을
-    # 가진 노드가 없다 → Grafana 가 영구 Pending 이 된다(도쿄 재구축이 "전부
-    # Healthy"에 도달하지 못함). 서울은 라벨+taint 가 있어 그 값이 맞다.
+    # 🔴 2026-10-25 — nodeSelector 를 **되살렸다.** 위 조건이 충족됐다.
     #
-    # tolerations 는 남겨 둔다 — 도쿄에는 지금 taint 가 없어 **아무 효과도 없고**,
-    # 카펜터 도입과 함께 taint·라벨이 들어오는 순간 바로 필요해진다. 그때
-    # nodeSelector 도 같이 되살려야 한다(서울과 같은 값).
+    # 경위: 2026-10-16(79c2312)에 서울 값을 복사해 nodeSelector 가 들어갔으나,
+    # 그때 도쿄 2-cluster 는 node_labels 를 넘기지 않아 그 라벨을 가진 노드가 없어
+    # Grafana 가 영구 Pending 이었다 → 2026-10-19 에 nodeSelector 만 뺐다. 그리고
+    # 그 자리에 **"카펜터 도입과 함께 taint·라벨이 들어오는 순간 … nodeSelector 도
+    # 같이 되살려야 한다"** 고 적어 두었다.
+    #
+    # 오늘 2-cluster 가 node_labels·node_taints 를 넘기면서(카펜터가 아니라 3 AZ ·
+    # 온디맨드 3대 고정 작업으로) 노드 3대에 라벨과 taint 가 모두 붙었다. 이제
+    # nodeSelector 는 통과하고, 오히려 **toleration 이 없는 쪽이 Pending** 이다.
+    nodeSelector:
+      aquasentinel.io/nodepool: stateful
     tolerations:
       - key: dedicated
         operator: Equal

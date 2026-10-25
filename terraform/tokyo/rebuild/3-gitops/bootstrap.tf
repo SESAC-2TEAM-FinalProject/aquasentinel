@@ -181,6 +181,32 @@ locals {
           hs.status = "Progressing"
           hs.message = "Keycloak 기동 중"
           return hs
+
+    # 🔴 전역 스케줄링 (2026-10-25 추가) — 서울 bootstrap.tf 의 같은 블록과 동일.
+    #
+    # 왜 필요해졌는가: 오늘 2-cluster 가 `node_labels`·`node_taints` 를 넘기게
+    # 되면서 도쿄 노드 3대가 전부 `dedicated=stateful:NoSchedule` 이 됐다. 그런데
+    # 차트는 redis 비밀을 만드는 **pre-install 훅 Job(`redisSecretInit`)** 을
+    # 기본으로 돌리고, 그 훅에는 toleration 이 없다 → 앉을 노드가 0 대라 Pending
+    # 으로 멈추고 `helm_release.argocd` 가 **pre-install 타임아웃으로 실패**한다.
+    # 2026-10-25 09:07~09:13Z 에 실제로 그렇게 났다(5분 41초 뒤 실패).
+    #
+    # 🔴 서울이 2026-10-19 에 이미 같은 사고를 겪고 고쳤고, 그 주석에
+    # **"운영 재구축에서도 똑같이 난다(SIM-08a 발견 항목)"** 고 적어 두었다.
+    # 도쿄에는 그 수정이 반영돼 있지 않았다.
+    #
+    # 컴포넌트별로 적지 않고 global 에 두는 이유도 서울과 같다 — 훅처럼 컴포넌트
+    # 목록에 없는 파드가 또 생기면 같은 사고가 반복된다. global 로 바닥을 깔아
+    # 그 부류를 닫는다. 컴포넌트별 값이 global 을 이기므로, 나중에 개별 설정을
+    # 더해도 이 블록과 충돌하지 않는다.
+    global:
+      nodeSelector:
+        aquasentinel.io/nodepool: stateful
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: stateful
+          effect: NoSchedule
   EOT
 
   argocd_values = <<-EOT
@@ -252,10 +278,11 @@ resource "helm_release" "argocd" {
   # selfHeal 이 켜져 있어 계속 재동기화를 돌린다 — "전부 Synced/Healthy" 가
   # 끝까지 안 나온다.
   #
-  # 스케줄링(global · 컴포넌트 7개)은 **일부러 넣지 않는다** — 도쿄 2-cluster 는
-  # node_labels·node_taints 를 넘기지 않아 `aquasentinel.io/nodepool` 라벨을 가진
-  # 노드가 없다. nodeSelector 를 복사해 넣으면 그 파드는 반드시 Pending 이 된다
-  # (grafana_values 에서 실제로 그랬다 — applications.tf 주석 참고).
+  # (2026-10-25) 스케줄링 전제가 뒤집혔다 — 위 `argocd_infra_values` 의 global
+  # 블록 주석이 본문이다. 요약하면: 전에는 도쿄 노드에 라벨도 taint 도 없어서
+  # nodeSelector 를 넣는 쪽이 Pending 이었으나, 오늘 2-cluster 가 둘 다 넘기게
+  # 되면서 **toleration 이 없는 쪽이 Pending** 이 됐다. applications.tf 의
+  # loki · kube-prometheus-stack · LBC · grafana 도 같은 날 같은 이유로 고쳤다.
   values = [local.argocd_infra_values, local.argocd_values]
 }
 
