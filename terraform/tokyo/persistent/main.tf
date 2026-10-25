@@ -40,6 +40,27 @@ locals {
   # 값이 한쪽만 바뀌는 사고를 막는다(seoul/persistent와 동일 패턴).
   thanos_prefix        = "thanos/"
   cloudnativepg_prefix = "cloudnativepg/"
+
+  # 🔴 도쿄 CNPG 가 **자기 백업을 쓰는** 경로 (2026-10-25 신설).
+  #
+  # 위 cloudnativepg_prefix 는 "서울 백업의 복제본을 읽는" 경로다 — 서울
+  # observability 버킷에 `replicate-to-tokyo` 복제 규칙이 걸려 있어 서울의
+  # `cloudnativepg/…` 키가 그대로 이 버킷에 복사된다. 그래서 값이 같아야 한다.
+  #
+  # 문제는 도쿄가 **쓰는** 경로도 같은 값이었다는 것이다. CNPG 는 복구를 시작하기
+  # 전에 `barman-cloud-check-wal-archive` 로 **자기 아카이브가 비어 있는지** 검사
+  # 하는데, 그 자리에 복제본이 계속 쌓이고 있어 영구히 거부당했다:
+  #
+  #     ERROR: WAL archive check failed for server aquasentinel-pg: Expected empty archive
+  #     s3://aquasentinel-dr-tokyo-observability-…/cloudnativepg/
+  #
+  # 2026-10-25 도쿄 최초 기동에서 복구 Job 이 7회 연속 Error 로 드러났다. 실제
+  # 리전 장애 때도 똑같이 막히므로 DR 2단계가 성립하지 않는 상태였다.
+  #
+  # 🔴 읽는 곳과 쓰는 곳을 가른다. 복제본은 읽기 전용으로 두고(복제가 계속
+  # 덮어쓰므로 도쿄가 그 자리에 쓰면 안 된다), 도쿄 자신의 백업은 이 경로로
+  # 보낸다. 서울은 이 값을 쓰지 않는다 — 도쿄에만 있는 개념이다.
+  cloudnativepg_write_prefix = "cloudnativepg-tokyo/"
 }
 
 module "storage" {
