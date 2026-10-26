@@ -60,8 +60,16 @@ def read_tf(name, required=True):
 
 
 def patch_targets():
-    """도쿄 .tf 가 패치하는 (kind, name) 목록."""
-    text = read_tf("applications.tf") + "\n" + read_tf("root.tf")
+    """도쿄 .tf 가 패치하는 (kind, name) 목록.
+
+    파일 이름을 고정하지 않고 그 디렉터리의 `*.tf` 를 전부 읽는다 — 2026-10-26 에
+    패치를 새 파일(apps-kustomize.tf)로 옮기고 나서 이 검사가 조용히 일부만 세는
+    것을 겪었다(28 → 25). 검사 도구가 조용히 범위를 잃는 것이 가장 나쁘다.
+    """
+    names = sorted(f for f in os.listdir(TOKYO_GITOPS) if f.endswith(".tf"))
+    if not names:
+        sys.exit("도쿄 3-gitops 에 .tf 가 없다: %s" % TOKYO_GITOPS)
+    text = "\n".join(read_tf(n) for n in names)
     pairs = re.findall(
         r'target\s*=\s*\{\s*kind\s*=\s*"([^"]+)"\s*,\s*name\s*=\s*"([^"]+)"', text
     )
@@ -129,9 +137,11 @@ def main():
     objects, images = gitops_objects(gitops)
     problems = []
 
+    tf_count = len([f for f in os.listdir(TOKYO_GITOPS) if f.endswith(".tf")])
     targets = patch_targets()
     missing = [t for t in targets if t not in objects]
-    print("A. 패치 대상 — 실재 %d / %d" % (len(targets) - len(missing), len(targets)))
+    print("A. 패치 대상 — 실재 %d / %d  (.tf %d개를 읽음)"
+          % (len(targets) - len(missing), len(targets), tf_count))
     for kind, name in missing:
         problems.append(
             "패치 대상이 gitops 에 없다: %s/%s — 이름이 바뀌었는지 보라."
