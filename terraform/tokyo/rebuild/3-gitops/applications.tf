@@ -803,6 +803,27 @@ locals {
         # 값은 바꾸지 않았다).
         retention: 2d
 
+        # 🔴 리전 라벨 — 이 Prometheus 가 내는 모든 지표·경보에 붙는다(2026-10-26).
+        #
+        # 왜 필요한가: 도쿄 Alertmanager 의 Discord 수신처를 **서울과 같은 값**으로
+        # 만들기로 정했다(scripts/tokyo-secret-replication.sh 머리말 — 백업 후
+        # 복구에서는 값이 다르면 전환 중에 맞추는 일이 늘어난다). 그러면 훈련 때
+        # 서울·도쿄가 **같은 Discord 채널**로 쏘는데, 라벨이 없으면 어느 쪽이
+        # 울렸는지 구분할 수 없다. 2026-10-26 실측으로 `externalLabels` 는 두
+        # 레포에 **0건**이었다.
+        #
+        # 🔴 서울에는 아직 넣지 않았다 — 값을 바꾸면 Prometheus 가 재시작하고 그
+        # 수집 공백이 판정 창(~2026-11-10) 측정에 그대로 들어간다. 창 뒤에 서울도
+        # 같은 라벨로 맞춘다. 그때까지는 "라벨이 있으면 도쿄, 없으면 서울" 로
+        # 구분된다 — 보기 좋진 않지만 창을 건드리지 않는다.
+        #
+        # 🔴 Discord **메시지에 이 라벨이 보이는지는 별건**이다. 수신처 템플릿은
+        # gitops manifests/alerting 쪽이고 알람 파이프라인 담당 영역이다 —
+        # 라벨을 심는 것까지가 인프라 몫이다.
+        externalLabels:
+          region: ${var.region}
+          cluster: ${data.terraform_remote_state.cluster.outputs.cluster_name}
+
         # (2026-10-20 리전 대조) 서울과 같은 값. requests 가 없으면 BestEffort 라
         # 메모리 압박 시 축출 1순위가 되고, 1벌이라 축출되면 수집이 멈춘다.
         resources:
