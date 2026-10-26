@@ -31,7 +31,9 @@
 # 쓰는 법
 #   ./tokyo-secret-replication.sh              # 무엇이 없는지 보기만 (기본)
 #   ./tokyo-secret-replication.sh --apply      # 복제 6개 설정
-#   ./tokyo-secret-replication.sh --apply-own  # 도쿄 전용 3개 생성(서울 값 복사)
+#   ./tokyo-secret-replication.sh --apply-own  # 도쿄 전용 2개 생성(서울 값 복사)
+#   ./tokyo-secret-replication.sh --apply-own --deadman-url https://hc-ping.com/<도쿄체크>
+#                                              # 3개 전부 — alertmanager 는 deadman 만 교체
 #
 # 안전장치
 #   - 운영 계정(379937169195)에서만 동작한다 — 시험 계정에서 돌리면 중단
@@ -46,13 +48,21 @@ TOKYO=ap-northeast-1
 PROD_ACCOUNT=379937169195
 APPLY=false
 APPLY_OWN=false
+DEADMAN_URL=""
 
-case "${1:-}" in
-  --apply) APPLY=true ;;
-  --apply-own) APPLY_OWN=true ;;
-  "") ;;
-  *) echo "모르는 옵션: $1 (--apply | --apply-own)" >&2; exit 2 ;;
-esac
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --apply) APPLY=true; shift ;;
+    --apply-own) APPLY_OWN=true; shift ;;
+    --deadman-url) DEADMAN_URL="${2:-}"; shift 2 ;;
+    *) echo "모르는 옵션: $1 (--apply | --apply-own [--deadman-url URL])" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -n "$DEADMAN_URL" && "$DEADMAN_URL" != https://* ]]; then
+  echo "중단 — --deadman-url 은 https:// 로 시작해야 합니다" >&2
+  exit 2
+fi
 
 # 서울에서 도쿄로 복제할 것 — 값이 서울과 같아야 하는 것들
 REPLICATE=(
@@ -68,20 +78,26 @@ REPLICATE=(
 # 형식: 도쿄이름|서울원본|설명
 TOKYO_OWN=(
   "aquasentinel-dr-tokyo-grafana-oidc-client-secret|aquasentinel-dev-grafana-oidc-client-secret|Grafana OIDC 클라이언트 비밀값. 서울 값이면 복구된 Keycloak DB 와 바로 일치한다"
-  "aquasentinel-dr-tokyo-alertmanager-receivers|aquasentinel-dev-alertmanager-receivers|Discord·데드맨 수신처 JSON(키 critical·warning·deadman)"
+  "aquasentinel-dr-tokyo-alertmanager-receivers|aquasentinel-dev-alertmanager-receivers|Discord·데드맨 수신처 JSON(키 critical·warning·deadman). 🔴 deadman 은 --deadman-url 로 받은 도쿄 전용 주소로 교체한다"
   "aquasentinel-dr-tokyo-argocd-notifications|aquasentinel-dev-argocd-notifications|Argo CD 알림 수신처"
 )
 
-# 🔴 alertmanager-receivers 를 그대로 복사하는 것의 알려진 한계 — 재희님 확인 필요
-#   ⑴ critical·warning(Discord): 같은 값이면 서울·도쿄가 **같은 채널**로 쏜다.
-#      훈련 때 어느 쪽이 울렸는지 구분하려면 경보에 리전 라벨이 필요한데
-#      `externalLabels` 가 두 레포에 **0건**이다(2026-10-26 실측). 라벨을 먼저
-#      넣어야 한다.
-#   ⑵ 🔴 deadman(Healthchecks.io): 같은 값이면 **도쿄가 서울의 데드맨 스위치를
-#      대신 채운다.** 도쿄가 떠 있는 동안 서울이 죽어도 핑이 계속 가서 안 울린다.
-#      백업 후 복구에서는 도쿄가 평상시 떠 있지 않아 위험 구간이 훈련 중으로
-#      한정되지만, 도쿄 전용 체크를 따로 두는 쪽이 맞을 수 있다 — 알람 파이프라인
-#      담당 판단이 필요하다.
+# alertmanager-receivers — 세 키 critical·warning·deadman (JSON 하나)
+# 근거: manifests/alerting/secret/external-secret.yaml · routing/alertmanagerconfig.yaml
+#
+#   ⑴ ✅ critical·warning(Discord): 같은 값으로 간다 — 서울·도쿄가 같은 채널로 쏘고,
+#      어느 쪽이 울렸는지는 **경보의 리전 라벨**로 가린다. 도쿄 Prometheus
+#      `externalLabels`(region·cluster)를 2026-10-26 에 넣었다(브랜치
+#      feat/tokyo-prometheus-region-labels-20261026). 🔴 서울은 창 뒤에 맞춘다 —
+#      지금 넣으면 Prometheus 재시작 공백이 판정 측정에 들어간다.
+#
+#   ⑵ 🔴 deadman(Healthchecks.io): **도쿄 전용 체크를 쓴다** — 2026-10-26 재희님 결정.
+#      서울 값을 그대로 복사하면 도쿄가 서울의 데드맨을 대신 채워서, 도쿄가 떠 있는
+#      동안 서울이 죽어도 핑이 계속 가고 **안 울린다.** gitops 쪽 주석도 처음부터
+#      그렇게 적어 두었다("데드맨 핑 URL은 리전·계정마다 다른 체크여야 한다").
+#      → 그래서 이 스크립트는 `--deadman-url` 없이는 이 시크릿을 **만들지 않는다.**
+#      주소는 재희님이 Healthchecks.io 에 도쿄용 체크를 만들어 주신다.
+#
 #   ⑶ 키가 하나라도 없으면 오퍼레이터가 AlertmanagerConfig **CR 전체를 거부**해
 #      Alertmanager 가 기본값(null)으로 돌아간다(그 매니페스트 주석). 즉 지금
 #      도쿄는 "알림 2개가 Degraded" 가 아니라 **알림 경로가 전부 죽어 있다.**
@@ -131,11 +147,15 @@ for name in "${REPLICATE[@]}"; do
 done
 
 echo
-echo "## 도쿄 전용 ${#TOKYO_OWN[@]}개 (이름은 도쿄 것 · 값은 서울 원본 복사)"
+echo "## 도쿄 전용 ${#TOKYO_OWN[@]}개 (이름은 도쿄 것 · 값은 서울 원본 복사 · deadman 은 교체)"
 
 # 값을 argv 로 넘기지 않는다(ps 에 보인다) — 권한 0600 임시 파일로 건넨다.
 tmp=""
-cleanup() { [[ -n "$tmp" && -f "$tmp" ]] && rm -f "$tmp"; }
+# 🔴 return 0 이 필요하다. `[[ ]] && rm` 형태면 조건이 거짓일 때(= 계획 모드처럼
+# 임시 파일을 안 만든 경우) 함수가 1 을 반환하고, `set -e` 아래의 EXIT 트랩에서는
+# 그것이 **스크립트 종료코드**가 된다. 그러면 `스크립트 && 다음작업` 체인이
+# 조용히 끊긴다(2026-10-26 실측 — 계획 모드가 정상 완료인데 1 을 반환했다).
+cleanup() { if [[ -n "$tmp" && -f "$tmp" ]]; then rm -f "$tmp"; fi; return 0; }
 trap cleanup EXIT
 
 for row in "${TOKYO_OWN[@]}"; do
@@ -152,8 +172,25 @@ for row in "${TOKYO_OWN[@]}"; do
     continue
   fi
 
+  # 🔴 데드맨만 도쿄 전용 값이어야 한다(위 ⑵) — 주소가 없으면 만들지 않는다.
+  needs_deadman=false
+  [[ "$name" == *alertmanager-receivers ]] && needs_deadman=true
+
+  if $needs_deadman && [[ -z "$DEADMAN_URL" ]]; then
+    echo "건너뜀 — --deadman-url 이 필요합니다"
+    printf '      → 서울 값을 그대로 복사하면 도쿄가 서울 데드맨을 대신 채워\n'
+    printf '        「서울이 죽었다」가 가려집니다(2026-10-26 재희님 결정: 도쿄 전용 체크).\n'
+    printf '        재희님이 주시는 Healthchecks.io 도쿄 체크 주소로 다시 돌리십시오:\n'
+    printf '          %s --apply-own --deadman-url https://hc-ping.com/<도쿄체크>\n' "$(basename "$0")"
+    continue
+  fi
+
   if ! $APPLY_OWN; then
-    echo "생성 예정 ← $src"
+    if $needs_deadman; then
+      echo "생성 예정 ← $src (deadman 만 --deadman-url 값으로 교체)"
+    else
+      echo "생성 예정 ← $src"
+    fi
     printf '      → %s\n' "$note"
     continue
   fi
@@ -172,10 +209,40 @@ for row in "${TOKYO_OWN[@]}"; do
     continue
   fi
 
+  # 🔴 deadman 키만 도쿄 전용 주소로 바꾼다. sed 가 아니라 JSON 파서로 하는 이유 —
+  # 웹훅 URL 에 / 와 ? 가 들어 있어 구분자 충돌이 나고, 조용히 깨진 JSON 을 넣으면
+  # 오퍼레이터가 CR 전체를 거부한다(위 ⑶). 값은 출력하지 않는다.
+  if $needs_deadman; then
+    if ! DEADMAN_URL="$DEADMAN_URL" python3 - "$tmp" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+with open(path) as f:
+    raw = f.read()
+try:
+    obj = json.loads(raw)
+except json.JSONDecodeError as e:
+    sys.exit("서울 값이 JSON 이 아닙니다: %s" % e)
+if not isinstance(obj, dict):
+    sys.exit("서울 값이 JSON 객체가 아닙니다")
+missing = [k for k in ("critical", "warning", "deadman") if k not in obj]
+if missing:
+    # 지금 고치지 않으면 도쿄에서 CR 전체가 거부된다 — 여기서 멈추는 쪽이 낫다.
+    sys.exit("서울 값에 키가 없습니다: %s" % ", ".join(missing))
+obj["deadman"] = os.environ["DEADMAN_URL"]
+with open(path, "w") as f:
+    json.dump(obj, f, ensure_ascii=False)
+PYEOF
+    then
+      echo "실패 — deadman 교체 중 중단(위 메시지 참고)"
+      rm -f "$tmp"; tmp=""
+      continue
+    fi
+  fi
+
   if ERR=$(aws secretsmanager create-secret \
       --name "$name" \
       --region "$TOKYO" \
-      --description "도쿄 DR 전용 — $src 값 복사(2026-10-26)" \
+      --description "도쿄 DR 전용 — $src 값 복사$($needs_deadman && echo " · deadman 은 도쿄 전용")(2026-10-26)" \
       --secret-string "file://$tmp" \
       --output text 2>&1 >/dev/null); then
     echo "만들었습니다 ← $src"
