@@ -32,8 +32,11 @@
 #   ./tokyo-secret-replication.sh              # 무엇이 없는지 보기만 (기본)
 #   ./tokyo-secret-replication.sh --apply      # 복제 6개 설정
 #   ./tokyo-secret-replication.sh --apply-own  # 도쿄 전용 2개 생성(서울 값 복사)
-#   ./tokyo-secret-replication.sh --apply-own --deadman-url https://hc-ping.com/<도쿄체크>
-#                                              # 3개 전부 — alertmanager 는 deadman 만 교체
+#
+#   # 3개 전부 — alertmanager 는 deadman 만 도쿄 전용 주소로 교체한다.
+#   # 🔴 환경변수로 넘긴다. argv(--deadman-url)는 ps 에 보인다.
+#   TOKYO_DEADMAN_URL='https://hc-ping.com/<도쿄체크>' \
+#       ./tokyo-secret-replication.sh --apply-own
 #
 # 안전장치
 #   - 운영 계정(379937169195)에서만 동작한다 — 시험 계정에서 돌리면 중단
@@ -48,19 +51,28 @@ TOKYO=ap-northeast-1
 PROD_ACCOUNT=379937169195
 APPLY=false
 APPLY_OWN=false
-DEADMAN_URL=""
+# 환경변수 쪽이 기본이다 — argv 는 ps 에 보인다(아래 --deadman-url 주석).
+DEADMAN_URL="${TOKYO_DEADMAN_URL:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=true; shift ;;
     --apply-own) APPLY_OWN=true; shift ;;
-    --deadman-url) DEADMAN_URL="${2:-}"; shift 2 ;;
-    *) echo "모르는 옵션: $1 (--apply | --apply-own [--deadman-url URL])" >&2; exit 2 ;;
+    --deadman-url)
+      # 🔴 argv 는 ps 에 보인다. 아래 환경변수 쪽을 쓰는 것이 맞고, 이 플래그는
+      # 남겨 두되 경고한다 — 이 스크립트는 다른 비밀값은 이미 argv 를 피하고 있다
+      # (0600 임시 파일 경유, 152행 주석). 알람 README 도 "키와 UUID는 git·채팅·
+      # 로그에 남기지 않는다" 로 같은 규칙을 적고 있다.
+      DEADMAN_URL="${2:-}"
+      echo "  ⚠️ --deadman-url 은 ps 에 노출됩니다. TOKYO_DEADMAN_URL 환경변수를 쓰십시오:" >&2
+      echo "       TOKYO_DEADMAN_URL='<주소>' $(basename "$0") --apply-own" >&2
+      shift 2 ;;
+    *) echo "모르는 옵션: $1 (--apply | --apply-own · 데드맨은 TOKYO_DEADMAN_URL)" >&2; exit 2 ;;
   esac
 done
 
 if [[ -n "$DEADMAN_URL" && "$DEADMAN_URL" != https://* ]]; then
-  echo "중단 — --deadman-url 은 https:// 로 시작해야 합니다" >&2
+  echo "중단 — 데드맨 주소는 https:// 로 시작해야 합니다" >&2
   exit 2
 fi
 
@@ -78,7 +90,7 @@ REPLICATE=(
 # 형식: 도쿄이름|서울원본|설명
 TOKYO_OWN=(
   "aquasentinel-dr-tokyo-grafana-oidc-client-secret|aquasentinel-dev-grafana-oidc-client-secret|Grafana OIDC 클라이언트 비밀값. 서울 값이면 복구된 Keycloak DB 와 바로 일치한다"
-  "aquasentinel-dr-tokyo-alertmanager-receivers|aquasentinel-dev-alertmanager-receivers|Discord·데드맨 수신처 JSON(키 critical·warning·deadman). 🔴 deadman 은 --deadman-url 로 받은 도쿄 전용 주소로 교체한다"
+  "aquasentinel-dr-tokyo-alertmanager-receivers|aquasentinel-dev-alertmanager-receivers|Discord·데드맨 수신처 JSON(키 critical·warning·deadman). 🔴 deadman 은 TOKYO_DEADMAN_URL 로 받은 도쿄 전용 주소로 교체한다"
   "aquasentinel-dr-tokyo-argocd-notifications|aquasentinel-dev-argocd-notifications|Argo CD 알림 수신처"
 )
 
@@ -95,8 +107,11 @@ TOKYO_OWN=(
 #      서울 값을 그대로 복사하면 도쿄가 서울의 데드맨을 대신 채워서, 도쿄가 떠 있는
 #      동안 서울이 죽어도 핑이 계속 가고 **안 울린다.** gitops 쪽 주석도 처음부터
 #      그렇게 적어 두었다("데드맨 핑 URL은 리전·계정마다 다른 체크여야 한다").
-#      → 그래서 이 스크립트는 `--deadman-url` 없이는 이 시크릿을 **만들지 않는다.**
-#      주소는 재희님이 Healthchecks.io 에 도쿄용 체크를 만들어 주신다.
+#      → 그래서 이 스크립트는 주소 없이는 이 시크릿을 **만들지 않는다.**
+#      🔴 도쿄 전용 체크는 **원래 설계**다 — `scripts/alerting/README.md` 22행이
+#      "데드맨 체크 UUID(서울·도쿄가 다르다)" 로 적어 두고 있고,
+#      `.gitlab-ci.yml` 391행도 "도쿄가 필요하면 HC_CHECK_UUID 를 바꿔 실행한다" 다.
+#      같은 UUID 가 teardown 때 점검 모드(maintenance.sh)에도 쓰인다.
 #
 #   ⑶ 키가 하나라도 없으면 오퍼레이터가 AlertmanagerConfig **CR 전체를 거부**해
 #      Alertmanager 가 기본값(null)으로 돌아간다(그 매니페스트 주석). 즉 지금
@@ -177,17 +192,18 @@ for row in "${TOKYO_OWN[@]}"; do
   [[ "$name" == *alertmanager-receivers ]] && needs_deadman=true
 
   if $needs_deadman && [[ -z "$DEADMAN_URL" ]]; then
-    echo "건너뜀 — --deadman-url 이 필요합니다"
+    echo "건너뜀 — TOKYO_DEADMAN_URL 이 필요합니다"
     printf '      → 서울 값을 그대로 복사하면 도쿄가 서울 데드맨을 대신 채워\n'
     printf '        「서울이 죽었다」가 가려집니다(2026-10-26 재희님 결정: 도쿄 전용 체크).\n'
-    printf '        재희님이 주시는 Healthchecks.io 도쿄 체크 주소로 다시 돌리십시오:\n'
-    printf '          %s --apply-own --deadman-url https://hc-ping.com/<도쿄체크>\n' "$(basename "$0")"
+    printf '        Healthchecks.io 에 도쿄 전용 체크를 만들고(README 22행 — 서울·도쿄가\n'
+    printf '        다른 UUID 를 쓰는 것이 원래 설계다) 그 핑 주소로 다시 돌리십시오:\n'
+    printf "          TOKYO_DEADMAN_URL='https://hc-ping.com/<도쿄체크>' %s --apply-own\n" "$(basename "$0")"
     continue
   fi
 
   if ! $APPLY_OWN; then
     if $needs_deadman; then
-      echo "생성 예정 ← $src (deadman 만 --deadman-url 값으로 교체)"
+      echo "생성 예정 ← $src (deadman 만 도쿄 전용 주소로 교체)"
     else
       echo "생성 예정 ← $src"
     fi
