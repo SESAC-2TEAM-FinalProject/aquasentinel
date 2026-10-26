@@ -1010,10 +1010,11 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
 }
 
 # Grafana — 서울과 동일 구조적 이유로 Application 전체를 Terraform이 소유한다
-# (seoul/rebuild/3-gitops/applications.tf 주석 참고). CloudWatch 데이터소스는
-# 아직 서울 전용이라 이 SA엔 role-arn annotation이 없다 — authType: default라
-# 자격증명 체인을 못 찾으면 그 데이터소스만 조용히 인증 실패한다(Grafana 기동
-# 자체엔 영향 없음).
+# (seoul/rebuild/3-gitops/applications.tf 주석 참고).
+#
+# (2026-10-26) CloudWatch 데이터소스가 이제 실제로 인증된다 — bootstrap.tf 의
+# grafana SA 에 role-arn 이 붙었다(반영 목록 #9). 그 전엔 이 데이터소스가
+# 자격증명 체인을 못 찾고 조용히 인증 실패하는 상태였다.
 locals {
   grafana_values = <<-EOT
     admin:
@@ -1103,11 +1104,16 @@ locals {
               postgresVersion: 1700
             secureJsonData:
               password: $GRAFANA_PG_RO_PASSWORD
+          # authType: default 는 AWS SDK 기본 자격증명 체인을 써서 IRSA 를
+          # 자동으로 줍는다. 🔴 기본 리전은 **이 리전**(도쿄)으로 둔다 —
+          # 서울 리전이 빠지는 상황에서 ap-northeast-2 지표는 애초에 읽을 수
+          # 없다. Route53 헬스체크 지표는 어느 쪽도 아닌 **us-east-1 전용**이라
+          # 쿼리에서 리전을 직접 골라야 한다(서울 쪽 같은 주석 참고).
           - name: CloudWatch
             type: cloudwatch
             jsonData:
               authType: default
-              defaultRegion: ap-northeast-2
+              defaultRegion: ${var.region}
   EOT
 }
 

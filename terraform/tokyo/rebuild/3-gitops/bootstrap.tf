@@ -360,14 +360,19 @@ resource "kubernetes_service_account_v1" "loki" {
 
 # grafana Application을 Terraform이 소유하면서(서울과 동일 구조적 이유,
 # seoul/rebuild/3-gitops/applications.tf 주석 참고) 같은 이름의 SA가 필요해졌다.
-# CloudWatch IRSA는 아직 서울 전용(2-cluster에 도쿄용 role이 없음) — role-arn
-# annotation 없이 SA만 만들어 차트가 참조할 이름을 갖춘다. 도쿄에서도 CloudWatch
-# 데이터소스가 필요해지면 2-cluster에 grafana_irsa 모듈을 추가하고 여기에
-# annotation을 붙인다.
+#
+# (2026-10-26) 바로 위 주석이 예고한 것을 했다 — 2-cluster 에 grafana_irsa 를
+# 추가하고 여기에 role-arn 을 붙였다(「도쿄 반영 목록」 #9). 전에는 annotation
+# 없이 SA 만 만들어서, 도쿄 grafana_values 에 이미 들어 있던 CloudWatch
+# 데이터소스가 자격증명 체인을 못 찾고 **조용히 인증 실패**했다(Grafana 기동
+# 자체엔 영향이 없어 겉으로 드러나지 않았다).
 resource "kubernetes_service_account_v1" "grafana" {
   metadata {
     name      = "grafana"
     namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+    annotations = {
+      "eks.amazonaws.com/role-arn" = data.terraform_remote_state.cluster.outputs.grafana_cloudwatch_role_arn
+    }
   }
 }
 

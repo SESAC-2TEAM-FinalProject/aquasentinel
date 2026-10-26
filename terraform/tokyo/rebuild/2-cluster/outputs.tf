@@ -57,3 +57,7 @@ output "collector_role_arn" {
 output "processor_role_arn" {
   value = module.processor_irsa.role_arn
 }
+
+output "grafana_cloudwatch_role_arn" {
+  value = module.grafana_irsa.role_arn
+}
