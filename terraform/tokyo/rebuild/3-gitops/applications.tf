@@ -605,16 +605,22 @@ resource "kubernetes_manifest" "patched_app" {
     spec = {
       project = "default"
 
+      # kustomize 블록은 patches·images 중 하나라도 있을 때만 넣는다 —
+      # 빈 블록을 넣으면 Argo CD 가 매번 차이로 잡는다.
+      #
+      # images(= ECR 리전 전환)는 ecr-images.tf 의 map 에서 찾는다. 왜 여기
+      # each.value 가 아니라 바깥 map 인지는 그 파일의 ecr_images_for 주석 참고.
       source = merge(
         {
           repoURL        = local.gitops_repo_url
           targetRevision = var.gitops_revision
           path           = each.value.path
         },
-        length(each.value.patches) > 0 ? {
-          kustomize = {
-            patches = each.value.patches
-          }
+        length(each.value.patches) > 0 || length(local.ecr_images_for[each.key]) > 0 ? {
+          kustomize = merge(
+            length(each.value.patches) > 0 ? { patches = each.value.patches } : {},
+            length(local.ecr_images_for[each.key]) > 0 ? { images = local.ecr_images_for[each.key] } : {},
+          )
         } : {}
       )
 
