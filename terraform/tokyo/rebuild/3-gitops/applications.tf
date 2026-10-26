@@ -207,7 +207,7 @@ locals {
       namespace = "api-module"
       patches = [
         # 🔴🔴 평상시 도쿄에서는 이 PushSecret 을 **리소스째 제거한다** —
-        # 2026-10-01 팀 결정의 복원(2026-10-25 재적용). Keycloak·status-svc 와
+        # 2026-10-01 팀 결정의 복원(2026-10-25 재적용). Keycloak·web-backend 와
         # 같은 누락 경로다(`environments/aws-tokyo-dr/` → `tokyo/rebuild/` 재편 때
         # 안 옮겨졌다).
         #
@@ -453,7 +453,7 @@ locals {
         #     key: aquasentinel-dev-api-module-database-username
         #
         # 그러면 web/aquasentinel-pg-app Secret 이 안 생기고, 그걸 env 로 받는
-        # status-svc(2벌) · alert-worker · grafana 가 CreateContainerConfigError 로
+        # web-backend(2벌 · 옛 status-svc) · alert-worker · grafana 가 CreateContainerConfigError 로
         # 영원히 못 뜬다. 2026-10-25 도쿄 최초 기동에서 실제로 그랬다.
         #
         # 같은 치환을 `api-module-db-secret` 쪽은 이미 하고 있다(이 파일 위쪽) —
@@ -470,8 +470,16 @@ locals {
             }
           ])
         },
-        # 🔴🔴 평상시 도쿄 status-svc 는 **0벌로 꺼 둔다** — 2026-10-01 팀 결정의
-        # 복원(2026-10-25 재적용). Keycloak(위) 과 같은 사유·같은 누락 경로다.
+        # 🔴🔴 평상시 도쿄 조회 API(web-backend) 는 **0벌로 꺼 둔다** — 2026-10-01
+        # 팀 결정의 복원(2026-10-25 재적용). Keycloak(위) 과 같은 사유·같은 누락 경로다.
+        #
+        # 🔴 **이름 변경(2026-10-26, gitops `!91` ~ `!93`)** — 쿠버네티스 객체 이름이
+        # `status-svc` → `web-backend` 로 바뀌었다. 아래 두 패치의 `target.name` 은
+        # gitops 매니페스트의 **객체 이름**을 가리키므로 같이 바꿨다. 안 바꾸면 대상이
+        # 없어 **이 「0벌로 꺼 두기」가 걸리지 않고 도쿄에서 2벌이 뜬다**(2026-10-26 발견).
+        # 🔸 웹 레포의 **소스 디렉터리 이름은 `status-svc` 그대로**다(아래 `/readyz`
+        # 설명의 경로는 손대지 않았다) — 바뀐 것은 객체 이름과 ECR 이미지 이름뿐이고,
+        # ECR 이미지 이름은 아직 `aquasentinel-dev/status-svc` 다(판정 창 뒤 교체 예정).
         #
         # 🔴 이쪽은 Keycloak 보다 **더 늦게 발견되는 형태**라 결정이 필요했다 —
         # `app/backend/status-svc/app/main.py` 의 `/readyz` 는 `db.ro()`(읽기 전용)
@@ -485,23 +493,27 @@ locals {
         # 쓰기만 깨짐" 이라 눈에 안 띈다. 🔴 **앱 코드는 고치지 않고**(웹팀 레포는
         # 태그로 고정 · `handoff/` 불변 원칙) 도쿄에서만 끄는 것으로 정했다.
         #
-        # 🔴 **ScaledObject 를 함께 지워야 한다** — status-svc 는 Rollout 이고
+        # 🔴 **ScaledObject 를 함께 지워야 한다** — web-backend 는 Rollout 이고
         # KEDA ScaledObject(`minReplicaCount: 2` · `fallback.replicas: 2`)가 그
         # Rollout 을 대상으로 삼는다. replicas 만 0 으로 바꾸면 **KEDA 가 만든 HPA 가
         # 곧바로 2벌로 되돌린다**(지표를 못 읽어도 fallback 2벌). 둘을 같이 처리해야
-        # 실제로 꺼진다.
+        # 실제로 꺼진다. (이름 변경 뒤에도 값은 같다 — 2026-10-26 실측:
+        # `manifests/web/web-backend-scaledobject.yaml` `minReplicaCount: 2` ·
+        # `fallback.replicas: 2` · `scaleTargetRef` 가 Rollout `web-backend`)
         #
-        # 🔴 `op = "add"` 인 이유: `manifests/web/status-svc-rollout.yaml` 에는
-        # `spec.replicas` 가 **없다**(KEDA 가 스케일을 쥐고 있어서). 경로가 없으면
-        # `replace` 는 실패하므로 `add` 로 새로 넣는다.
+        # 🔴 `op = "add"` 인 이유: `manifests/web/web-backend-rollout.yaml` 에는
+        # `spec.replicas` 가 **없다**(KEDA 가 스케일을 쥐고 있어서 — 매니페스트에
+        # *"replicas 를 적지 않는다"* 고 명시돼 있다. 2026-10-26 재확인). 경로가
+        # 없으면 `replace` 는 실패하므로 `add` 로 새로 넣는다.
         #
-        # PDB `status-svc`(`minAvailable: 1`)는 그대로 둔다 — 대상 파드가 0개면
+        # PDB `web-backend`(`minAvailable: 1`)는 그대로 둔다 — 대상 파드가 0개면
         # 축출 제어할 것이 없어 무효이고, 승격 때 복원하면 바로 다시 유효해진다.
+        # (PDB 도 이름이 바뀌었지만 **패치하지 않으므로 손댈 것이 없다**.)
         #
         # 🔴 **승격(DR 전환) 때는 아래 두 패치를 지운다** — Keycloak 주석의 런북
         # ②단계와 같은 타이밍이다.
         {
-          target = { kind = "Rollout", name = "status-svc" }
+          target = { kind = "Rollout", name = "web-backend" }
           patch = jsonencode([
             { op = "add", path = "/spec/replicas", value = 0 }
           ])
@@ -512,12 +524,12 @@ locals {
         # Argo 는 이 리소스를 아예 받지 않고, `prune: true` 라 이미 있던 것은
         # 삭제된다. (`api-module-db-secret` 의 PushSecret 도 같은 방식이다.)
         {
-          target = { kind = "ScaledObject", name = "status-svc" }
+          target = { kind = "ScaledObject", name = "web-backend" }
           patch  = <<-EOT
             apiVersion: keda.sh/v1alpha1
             kind: ScaledObject
             metadata:
-              name: status-svc
+              name: web-backend
               namespace: web
             $patch: delete
           EOT

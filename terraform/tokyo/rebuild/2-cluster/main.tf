@@ -86,8 +86,8 @@ module "eks" {
   # node_labels = {} · node_taints = [] 라서(modules/aws-eks/variables.tf) 도쿄 노드에는
   # 라벨이 아예 붙지 않는데, gitops manifests/ 는 두 리전 공용이고 그 안에 nodeSelector
   # aquasentinel.io/nodepool=stateful 이 걸린 워크로드가 23개다(gitlab/main 전수):
-  # Cluster/aquasentinel-pg(DB) · Keycloak 2 · web 4(status-svc·web-frontend·
-  # alert-worker·ocean-fetch) · api-module 14 · egress-proxy · redis-exporter.
+  # Cluster/aquasentinel-pg(DB) · Keycloak 2 · web 4(web-backend(옛 status-svc)·
+  # web-frontend·alert-worker·ocean-fetch) · api-module 14 · egress-proxy · redis-exporter.
   # 즉 이게 없으면 apply 는 성공하는데 그 23개가 전부 Pending 으로 남아 빈 클러스터가
   # 된다 — 에러가 나지 않아 더 늦게 발견된다.
   #
