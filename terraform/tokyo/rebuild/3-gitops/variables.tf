@@ -47,6 +47,12 @@ variable "dr_mode" {
         `/readyz` 가 읽기 전용만 확인해서 **쓰기 요청만 조용히 500** 이 된다
       - `api-module-database` PushSecret 제거 — Replica Cluster 는 app 사용자를
         만들지 않아 source Secret 이 **애초에 없어** 영구 실패한다
+      - api-module 쓰기 워크로드 정지(2026-10-26 결정 ③ — 「대기 모드에서만
+        끈다」) — completeness-check Deployment · processor/grading/
+        interpolation/evaluation Rollout + ScaledObject · interpolation-error/
+        evaluation-sweep CronJob. 🔴 `raw-coverage` 는 읽기 전용이라 건드리지
+        않는다. active 에서는 **반드시 깨워야** 한다 — 신선도 회복이 곧 RTO
+        정의이기 때문이다
 
     🔴 `suspend_collectors` 와는 **다른 축**이다. 이쪽은 "도쿄 DB 가 쓰기
     가능한가", 저쪽은 "서울과 공공 API 열쇠를 동시에 쓰는가"다. 서울이 살아
@@ -56,8 +62,6 @@ variable "dr_mode" {
     🔴 이 변수가 다루지 않는 것
       - CNPG 승격(`replica.enabled: true→false`) — 런북 ①단계, 데이터가 걸린
         동작이라 일부러 사람이 한다
-      - api-module 워크로드를 도쿄에서 끌지 — **아직 결정 전**(2026-10-25
-        공유 문서의 결정 ③). 정해지면 이 스위치에 얹는다
       - 승격 뒤 비밀번호 맞추기 · Route53 — 런북 ④⑤단계
   EOT
   type        = string
