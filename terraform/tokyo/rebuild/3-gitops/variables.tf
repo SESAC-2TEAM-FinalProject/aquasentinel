@@ -28,6 +28,47 @@ variable "tfstate_bucket_region" {
   default = "ap-northeast-2"
 }
 
+variable "dr_mode" {
+  description = <<-EOT
+    🔴 도쿄를 **대기 상태**로 띄울지, **전환(승격) 상태**로 띄울지.
+
+      standby — 평상시(기본). 쓰기가 필요한 워크로드를 꺼 둔다.
+      active  — 실제 DR 전환. 그 패치들을 빼서 깨운다.
+
+    왜 변수여야 하는가 — 전에는 이 패치들이 코드에 박혀 있어서, 승격하려면
+    장애 한가운데서 `applications.tf` 를 **손으로 고쳐야** 했다(MR !71 이
+    넣은 주석의 런북 ②③단계가 그 뜻이다). 그 시간이 전부 RTO 에 들어간다.
+    이제 `-var dr_mode=active` 한 줄이 그 두 단계를 대신한다.
+
+    standby 에서 꺼 두는 것과 그 이유(2026-10-01 팀 결정 · 2026-10-25 실측)
+      - Keycloak `instances: 0` — Replica Cluster 는 `transaction_read_only`
+        이고 Keycloak 은 기동 때 스키마를 써야 해 **구조적으로 못 뜬다**
+      - 조회 API(web-backend) `replicas: 0` + KEDA ScaledObject 제거 —
+        `/readyz` 가 읽기 전용만 확인해서 **쓰기 요청만 조용히 500** 이 된다
+      - `api-module-database` PushSecret 제거 — Replica Cluster 는 app 사용자를
+        만들지 않아 source Secret 이 **애초에 없어** 영구 실패한다
+
+    🔴 `suspend_collectors` 와는 **다른 축**이다. 이쪽은 "도쿄 DB 가 쓰기
+    가능한가", 저쪽은 "서울과 공공 API 열쇠를 동시에 쓰는가"다. 서울이 살아
+    있는 채로 하는 훈련에서는 `dr_mode=active` 여도 collector 는 멈춰 둬야
+    한다 — 두 변수를 따로 두는 이유다.
+
+    🔴 이 변수가 다루지 않는 것
+      - CNPG 승격(`replica.enabled: true→false`) — 런북 ①단계, 데이터가 걸린
+        동작이라 일부러 사람이 한다
+      - api-module 워크로드를 도쿄에서 끌지 — **아직 결정 전**(2026-10-25
+        공유 문서의 결정 ③). 정해지면 이 스위치에 얹는다
+      - 승격 뒤 비밀번호 맞추기 · Route53 — 런북 ④⑤단계
+  EOT
+  type        = string
+  default     = "standby"
+
+  validation {
+    condition     = contains(["standby", "active"], var.dr_mode)
+    error_message = "dr_mode 는 standby 또는 active 여야 한다."
+  }
+}
+
 variable "suspend_collectors" {
   description = <<-EOT
     🔴 도쿄 collector CronJob 6개를 멈춘 채로 띄운다(훈련 모드).

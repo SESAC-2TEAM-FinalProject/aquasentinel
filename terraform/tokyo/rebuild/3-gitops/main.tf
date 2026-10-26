@@ -69,6 +69,9 @@ locals {
     }
   }
 
+  # 평상시 대기 상태인가 — var.dr_mode 설명 참고. 패치를 넣고 빼는 조건으로만 쓴다.
+  dr_standby = var.dr_mode == "standby"
+
   gitops_pat_secret_name = "${local.name_prefix}-argocd-gitops-token"
   gitops_repo_url        = "https://gitlab.com/sesac-2team-finalproject/aquasentinel-gitops.git" # GitHub→GitLab 전환(2026-10-11)
 
