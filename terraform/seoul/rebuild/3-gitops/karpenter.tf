@@ -148,9 +148,20 @@ resource "kubernetes_manifest" "karpenter_ec2nodeclass_default" {
 }
 
 # ---------------------------------------------------------------------------
-# NodePool "general" — 앱·수집기 등 무상태 워크로드. 전부 스팟(비용 프로필
-# 유지, t3.large 한 유형 → 2vCPU/8GiB 급 5종으로 다변화. 2026-10-15, 서비스
-# 배치 최종 제안 1장 ②·6장 ③ — 한 유형이 통째로 회수돼도 나머지가 살아남는다).
+# NodePool "general" — 부하 증설 전용. 평소 0대다(SIM-14 결론 — 상시 파드는
+# 관리형 노드그룹 온디맨드 3대, 카펜터는 넘칠 때만. 2026-10-23 운영 확인).
+# 인스턴스 유형은 2vCPU/8GiB 급 5종(2026-10-15, 서비스 배치 최종 제안 1장 ②·
+# 6장 ③ — 한 유형이 통째로 회수돼도 나머지가 살아남는다).
+#
+# SIM-14 단계 ⑤(카펜터 수정 방안 3.1, 2026-10-26):
+#   - 용량 유형 스팟 + 온디맨드 — 스팟을 못 받으면 증설이 Pending 으로 멈춘다.
+#     카펜터는 스팟을 먼저 고르고, 없을 때만 온디맨드로 띄운다.
+#   - 수명 24h — 부하 노드가 하루를 넘기면 이상 신호다. 카펜터 v1 의 수명 만료는
+#     disruption 예산을 따지지 않으므로 이보다 짧게 잡지 않는다.
+#   - weight 는 넣지 않는다. 예비 풀(stateful-spare)을 부하가 먹지 못하게 막는
+#     것은 워크로드 쪽 `aquasentinel.io/spare DoesNotExist` 필수 조건이다.
+#   - limits 는 그대로 둔다 — 온디맨드까지 열린 뒤의 상한은 LT-02(부하 시험)
+#     실측 뒤 다시 산정한다.
 # ---------------------------------------------------------------------------
 
 resource "kubernetes_manifest" "karpenter_nodepool_general" {
@@ -173,6 +184,7 @@ resource "kubernetes_manifest" "karpenter_nodepool_general" {
             kind  = "EC2NodeClass"
             name  = "default"
           }
+          expireAfter = "24h"
           requirements = [
             {
               key      = "node.kubernetes.io/instance-type"
@@ -182,7 +194,7 @@ resource "kubernetes_manifest" "karpenter_nodepool_general" {
             {
               key      = "karpenter.sh/capacity-type"
               operator = "In"
-              values   = ["spot"]
+              values   = ["spot", "on-demand"]
             },
           ]
         }
