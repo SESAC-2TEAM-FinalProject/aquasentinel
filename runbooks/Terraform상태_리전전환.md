@@ -1,6 +1,6 @@
 # 런북 — Terraform 상태 버킷 리전 전환 (서울 ↔ 도쿄 복제본)
 
-- 대상: `terraform/global/bootstrap` 이 만드는 state 버킷과 **전 컴포넌트의 `backend.hcl`**(2026-10-27 기준 **14개** — `tokyo/runner` 신설분 포함)
+- 대상: `terraform/global/bootstrap` 이 만드는 state 버킷과 **전 컴포넌트의 `backend.hcl`**(2026-10-27 기준 **15개** — `tokyo/runner`·`tokyo/rebuild/5-peering` 신설분 포함)
 - 작성 2026-10-26 · A(원주)
 - 근거: DR 시나리오(develop) 3.2 `[가정 예외]` · 8.3 「Terraform 상태 버킷 리전 이중화」 · 2026-10-26 실측
 - 🔴 **훈련 단계**(계획서 3.1 · 부록 B): **1장은 1부 *전* 사전 조건 #4** — 복제 적용 + 1회 전량 동기화(✅ **2026-10-27 완료** · 31/31 ETag 대조) / **3장은 1부 0단계** — backend 를 복제본으로 바꿔 「서울이 없다」를 성립시킴
@@ -191,3 +191,4 @@ terraform -chdir=terraform/<컴포넌트> force-unlock <LOCK_ID>
 |---|---|
 | 2026-10-26 | 신규. `global/bootstrap/replication.tf` + `scripts/dr-switch-tfstate-backend.sh` 와 같이 작성. 🔴 스크립트 작성 중 결함 2건을 잡았습니다 — ⑴ `mapfile`(macOS 기본 bash 3.2 에 없음 · `bash -n` 은 통과) ⑵ `\s`(BSD sed·grep 이 모름 → 전부 "알 수 없음" 으로 잡혔다). 둘 다 **실행해 봐야 드러나는** 부류였습니다 |
 | 2026-10-27 | `tokyo/runner` 신설로 컴포넌트가 **13 → 14** 개가 되었습니다. 스크립트는 `find` 로 세므로 코드 변경 없이 14개를 잡습니다(`--status` 로 **원본 14 · 알 수 없음 0** 확인). 본문의 「13개」 서술만 고쳤습니다 |
+| 2026-10-27 | `tokyo/rebuild/5-peering` 신설(Stage 2 직접 전송)로 **14 → 15** 개가 되었습니다. 🔸 이 컴포넌트는 **Stage 2 에서만** 씁니다 — 1부(Stage 0)에는 state 자체가 없습니다. 스크립트는 `find` 로 세므로 코드 변경 없이 15개를 잡습니다 |
