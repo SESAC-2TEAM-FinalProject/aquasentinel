@@ -48,6 +48,7 @@
 #   🔸 grafana-oidc-client-secret 은 기본이 **서울 값 복사**다(2026-10-26 결정,
 #      위 주석). 도쿄 전용 값으로 가기로 바뀌면 그때만 아래를 더한다:
 #        TOKYO_GRAFANA_OIDC_SECRET='<새 값>'
+#        (이 시크릿은 평문이라 JSON 키가 아니라 **값 전체**가 바뀐다 — 2026-10-27 실측)
 #      🔴 그 경우 훈련 중 Grafana 로그인이 안 된다 — 도쿄 Grafana 가 훈련
 #      중에는 서울 Keycloak 을 보기 때문이다(2026-10-27 실측).
 #
@@ -215,7 +216,8 @@ for row in "${TOKYO_OWN[@]}"; do
   # 🔴 도쿄 전용 값으로 덮어쓸 JSON 키 — "키=환경변수값" 목록(2026-10-27).
   # 알림 수신처는 전부 도쿄 전용이어야 한다. 같은 수신처를 공유하면 도쿄가
   # 보낸 것이 「서울이 죽었다」를 가린다.
-  overrides=()
+  overrides=()        # JSON 값일 때 — 바꿀 "키=값" 목록
+  raw_override=""     # 평문 값일 때 — 통째로 바꿀 값
   missing_env=()
   case "$name" in
     *alertmanager-receivers)
@@ -228,7 +230,13 @@ for row in "${TOKYO_OWN[@]}"; do
       ;;
     *grafana-oidc-client-secret)
       # 🔸 선택이다 — 비우면 서울 값 그대로(2026-10-26 결정).
-      [[ -n "$GRAFANA_OIDC_SECRET" ]] && overrides+=("secret=$GRAFANA_OIDC_SECRET")
+      # 🔴 이 시크릿은 JSON 이 아니라 **평문**이다(2026-10-27 실측, 44자).
+      #    gitops manifests/grafana/secret/oidc-client-external-secret.yaml 의
+      #    ExternalSecret 에 property: 가 없어 SecretString **전체**를 그대로 쓴다
+      #    (`secretKey: secret` 은 K8s 템플릿 안 별칭이지 JSON 키가 아니다).
+      #    그래서 overrides 로 넣으면 안 된다 — JSON 파서가 첫 줄에서
+      #    "서울 값이 JSON 이 아닙니다" 로 중단한다.
+      [[ -n "$GRAFANA_OIDC_SECRET" ]] && raw_override="$GRAFANA_OIDC_SECRET"
       ;;
   esac
 
@@ -248,6 +256,8 @@ for row in "${TOKYO_OWN[@]}"; do
       _keys=(); for _o in "${overrides[@]}"; do _keys+=("${_o%%=*}"); done
       echo "생성 예정 ← $src (도쿄 전용으로 교체할 키: ${_keys[*]})"
       unset _keys _o
+    elif [[ -n "$raw_override" ]]; then
+      echo "생성 예정 ← $src (도쿄 전용 값으로 **통째** 교체 — 평문)"
     else
       echo "생성 예정 ← $src (서울 값 그대로)"
     fi
@@ -267,6 +277,12 @@ for row in "${TOKYO_OWN[@]}"; do
     echo "실패 — 서울 값이 비어 있습니다"
     rm -f "$tmp"; tmp=""
     continue
+  fi
+
+  # 🔴 평문 시크릿은 JSON 패치가 아니라 통째 교체다. 값은 출력하지 않는다.
+  # 끝에 줄바꿈을 붙이지 않는다 — Secrets Manager 는 그 한 글자까지 값으로 본다.
+  if [[ -n "$raw_override" ]]; then
+    printf '%s' "$raw_override" > "$tmp"
   fi
 
   # 🔴 deadman 키만 도쿄 전용 주소로 바꾼다. sed 가 아니라 JSON 파서로 하는 이유 —
@@ -312,7 +328,7 @@ PYEOF
   if ERR=$(aws secretsmanager create-secret \
       --name "$name" \
       --region "$TOKYO" \
-      --description "도쿄 DR 전용 — $src 기반$( (( ${#overrides[@]} > 0 )) && echo " · 도쿄 전용 키 교체")(2026-10-27)" \
+      --description "도쿄 DR 전용 — $src 기반$( { (( ${#overrides[@]} > 0 )) || [[ -n "$raw_override" ]]; } && echo " · 도쿄 전용 값 교체")(2026-10-27)" \
       --secret-string "file://$tmp" \
       --output text 2>&1 >/dev/null); then
     echo "만들었습니다 ← $src"
