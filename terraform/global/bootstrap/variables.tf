@@ -13,7 +13,7 @@ variable "bootstrap_region" {
 variable "enable_tfstate_replication" {
   description = <<-EOT
     tfstate 버킷을 도쿄로 복제할지(CRR). 🔴 끄면 **진짜 서울 장애에서 도쿄를
-    세울 수 없다** — 13개 컴포넌트의 backend.hcl 이 전부 서울 버킷을 가리키기
+    세울 수 없다** — 전 컴포넌트(14개)의 backend.hcl 이 전부 서울 버킷을 가리키기
     때문이다(2026-10-26 실측). DR 시나리오 문서의 `[가정 예외]` 가 그것이다.
 
     이 컴포넌트는 CI 범위 밖이라(최초 1회 수동 적용 · `.gitlab-ci.yml` 머리말)
