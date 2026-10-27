@@ -194,9 +194,46 @@ kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres
 
 ---
 
-## 3. 2부 2단계 — 끊기와 되돌리기
+## 3. 2부 2단계 — 끊기 · RPO 측정 · 되돌리기
 
-**끊기** — 🔴 **도쿄 라우트만** 지웁니다. 서울은 안 건드립니다(계획서 2.3).
+🔴 **여기가 2부의 본편입니다.** 끊는 것 자체가 목적이 아니라 **⑴ 얼마를 잃는가(RPO) ⑵ 다시 붙는 데 사람 손이 드는가(#6)** 를 재는 것이 목적입니다.
+
+### 3.0 예상 — 먼저 적어 두고 시작합니다
+
+🔸 **「자동 재개, 5초 안」으로 봅니다** `[추론]`. 근거는 2026-10-27 서울 실측입니다(계획서 **#6 보충**):
+
+| 실측값 | 뜻 |
+|---|---|
+| `wal_retrieve_retry_interval` = **5초** | 받는 쪽이 5초마다 **스스로** 다시 붙어 봅니다 |
+| `wal_receiver_timeout` = **5초** | 라우트 삭제는 **무응답** 상태라 5초 만에 끊긴 걸 압니다 |
+| `wal_keep_size` = **512MB** · WAL 생성 **0.4 KB/s** | 🔴 **약 16일치**입니다. 훈련에서 30분을 끊어도 **0.7MB** 뿐이라 서울에 통째로 남아 있습니다 |
+| `restore_command` **있음** | 그래도 막히면 S3 아카이브로 폴백합니다 |
+
+🔴 **예상이 빗나가는 것 자체가 결과입니다.** 다르게 나오면 그대로 적습니다 — 맞추려고 고치지 않습니다.
+
+### 3.1 끊기 **직전** — 기준값을 먼저 찍습니다
+
+🔴 **이 단계를 빠뜨리면 RPO 를 못 잽니다.** 되돌아갈 수 없습니다.
+
+```bash
+date -u +%FT%TZ                       # T_cut — 끊는 시각
+# 서울이 어디까지 썼나
+kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT pg_current_wal_lsn();"
+# 도쿄가 어디까지 받았나
+kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn();"
+```
+
+| 기록할 것 | 값 |
+|---|---|
+| `T_cut` | ⟨ ⟩ |
+| 서울 `pg_current_wal_lsn()` | ⟨ ⟩ |
+| 도쿄 `pg_last_wal_receive_lsn()` | ⟨ ⟩ |
+
+### 3.2 끊기 — 🔴 도쿄 라우트만
+
+서울은 **안 건드립니다**(계획서 2.3 — 판정 창 안 서울 변경이 되지 않게).
 
 ```bash
 cd AWS/terraform/tokyo/rebuild/5-peering
@@ -205,21 +242,89 @@ terraform apply -input=false -var enable_tokyo_route=false
 
 🔸 훈련 중에는 apply 를 기다리기보다 AWS CLI 로 라우트만 지우는 쪽이 빠를 수 있습니다. 그 경우 **되돌린 뒤 반드시 `terraform plan` 으로 `No changes` 를 확인**합니다 — 안 그러면 코드와 실물이 어긋난 채 남습니다.
 
-**끊긴 것 확인** — 서울 `pg_stat_replication` 에서 도쿄 줄이 사라지고, 도쿄 `pg_stat_wal_receiver` 가 비웁니다.
-
-**되돌리기**:
+**끊긴 것 확인** — 둘 다 봅니다:
 
 ```bash
+# 서울 — 도쿄 줄이 사라져야 합니다
+kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -c "SELECT application_name, client_addr, state FROM pg_stat_replication;"
+# 도쿄 — 비어야 합니다
+kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -c "SELECT status, sender_host FROM pg_stat_wal_receiver;"
+```
+
+| 기록할 것 | 예상 | 실측 |
+|---|---|---|
+| 도쿄 `pg_stat_wal_receiver` 가 **비는 데** 걸린 시간 | **5초**(`wal_receiver_timeout`) | ⟨ ⟩ |
+
+### 3.3 끊긴 동안 — S3 폴백이 도는가
+
+🔴 **`plugin`(S3 아카이브)을 일부러 남겨 뒀습니다.** 스트리밍이 끊겨도 도쿄는 S3 로 계속 따라갑니다 — **복제가 완전히 멈추지는 않습니다.**
+
+```bash
+kubectl --context "$TOKYO" logs -n aquasentinel-db aquasentinel-pg-1 -c postgres --tail=50 \
+  | grep -i "restored log file\|wal-restore"
+```
+
+| 기록할 것 | 실측 |
+|---|---|
+| 폴백이 도는가 (`restored log file` 이 보이나) | ⟨ ⟩ |
+| 🔴 **이 구성(스트리밍 + S3 동시)은 이 프로젝트에서 처음입니다** — 이상하면 그대로 적습니다 | ⟨ ⟩ |
+
+### 3.4 되돌리기
+
+```bash
+date -u +%FT%TZ                       # T_restore — 라우트를 되돌린 시각
+cd AWS/terraform/tokyo/rebuild/5-peering
 terraform apply -input=false -var enable_tokyo_route=true
 ```
 
-🔴 **되돌린 뒤 스트리밍이 저절로 재개되는지가 사전 조건 #6 입니다 — 아직 실측 안 됐습니다.** 재개가 안 되면 도쿄 인스턴스 파드를 재시작해 봅니다:
+### 3.5 🔴 되돌린 뒤 — **#6 의 답**
+
+**사람이 아무것도 하지 않은 채** 지켜봅니다. 10초 간격으로:
+
+```bash
+while true; do
+  printf '%s  ' "$(date -u +%H:%M:%SZ)"
+  kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+    psql -U postgres -tAc "SELECT coalesce(status,'(없음)') FROM pg_stat_wal_receiver;" 2>/dev/null \
+    || echo "(조회 실패)"
+  sleep 10
+done
+```
+
+| 기록할 것 | 예상 | 실측 |
+|---|---|---|
+| 🔴 `streaming` 으로 **돌아오는 데** 걸린 시간 | **5초 안** | ⟨ ⟩ ← **#6 의 답** |
+| 사람 손이 필요했나 | **아니오** | ⟨ ⟩ |
+
+🔴 **2분을 기다려도 안 돌아오면** 도쿄 인스턴스 파드를 재시작합니다. 🔸 **그 경우 「자동 재개 안 됨」이 답이고, 재시작까지가 되돌리기 시간에 들어갑니다.**
 
 ```bash
 kubectl --context "$TOKYO" delete pod -n aquasentinel-db aquasentinel-pg-1
 ```
 
-🔸 `plugin`(S3 아카이브)을 **일부러 남겨 뒀기 때문에**, 스트리밍이 끊긴 동안에도 도쿄는 **S3 로 계속 따라갑니다** — 복제가 완전히 멈추지는 않습니다. 끊긴 동안 벌어지는 차이가 **2부에서 재려는 RPO** 입니다.
+**따라잡은 뒤** — 지연이 0 으로 수렴하는 시각:
+
+```bash
+kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -c "SELECT application_name,
+         pg_wal_lsn_diff(sent_lsn, replay_lsn) AS behind_bytes
+       FROM pg_stat_replication;"
+```
+
+| 기록할 것 | 실측 |
+|---|---|
+| 지연이 **0 으로 수렴**한 시각 `T_caught` | ⟨ ⟩ |
+| 🔴 **RPO** = 3.1 의 두 LSN 차이 (`pg_wal_lsn_diff`) | ⟨ ⟩ 바이트 |
+| 되돌리기 전체 시간 = `T_caught - T_restore` | ⟨ ⟩ |
+
+🔴 **RPO 계산**은 서울에서 합니다 — 3.1 에 적은 두 LSN 을 넣습니다:
+
+```bash
+kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT pg_wal_lsn_diff('<서울 LSN>', '<도쿄 LSN>');"
+```
 
 ---
 
@@ -251,4 +356,6 @@ kubectl --context "$TOKYO" delete secret -n aquasentinel-db \
 | 🔴 서울과 같은 시크릿 이름 | 도쿄 CNPG 가 만드는 것과 충돌 | `-seoul-` 을 끼웁니다 |
 | `verify-full` 로 바꿈 | SAN 에 NLB 이름이 없어 실패 | 1장 — `verify-ca` |
 | A 없이 D 먼저 | precondition 에서 멈춤 | 순서대로 |
+| 🔴🔴 **3.1 기준값을 안 찍고 끊음** | **RPO 를 영영 못 잽니다** — 끊는 순간의 두 LSN 이 2부의 유일한 산출물입니다 | 3.1 을 먼저 · 세 값(`T_cut`·서울 LSN·도쿄 LSN) |
+| 되돌린 뒤 **바로** 파드 재시작 | #6 의 답이 「자동 재개인가」인데, 손대면 **묻던 것을 못 묻습니다** | 🔸 **2분은 지켜봅니다**(3.5) |
 | `plugin` 을 지움 | 스트리밍이 끊기면 **복제가 완전히 멈춥니다** | 🔴 남겨 둡니다 — 폴백입니다 |
