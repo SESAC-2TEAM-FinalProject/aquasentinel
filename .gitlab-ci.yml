@@ -24,8 +24,11 @@
 #   - terraform/global/bootstrap/  (tfstate 백엔드 S3 버킷 자체)
 #   - terraform/global/cicd/       (이 파이프라인이 쓰는 IAM Role 자체)
 #
-# 도쿄는 D4(상시 운영) 이후로 둘로 나뉜다:
+# 도쿄는 D4(상시 운영) 이후로 셋으로 나뉜다:
 #   - tokyo/persistent/   서울과 동일하게 자동 plan + 수동 승인 apply(상시 관리 대상)
+#   - tokyo/runner/       DR 러너(2026-10-27 신설). persistent 와 같은 층 —
+#                         재구축 주기 밖이라 도쿄를 내려도 살아 있어야 한다.
+#                         validate 자동 + plan(MR) + apply 수동.
 #   - tokyo/rebuild/*     자동 트리거 없음, 전부 when: manual — 재해 상황에만 사람이
 #                         직접 버튼을 눌러 실행한다(DR 전제와 상충하는 자동
 #                         destroy/apply 방지)
@@ -367,6 +370,58 @@ apply:global-runner:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
       changes:
         - terraform/global/runner/**/*
+        - terraform/modules/**/*
+      when: manual
+  allow_failure: false
+
+# ---------------------------------------------------------------------------
+# tokyo/runner — 도쿄 DR 러너(2026-10-27). global/runner 와 같은 꼴이지만 리전과
+# 상태 키가 다르다.
+#
+# 🔴 apply 를 자동으로 돌리지 않는 이유가 global/runner 보다 하나 더 있다 —
+# 이 러너는 평소 GitLab 에서 Pause 상태다(같은 태그로 켜 두면 서울 잡을
+# 가로챈다). 그래서 이 컴포넌트를 바꿔도 apply 는 서울 러너가 수동으로 돌린다.
+# 🔴 서울이 빠진 재해 상황에서는 이 파일의 잡들이 전부 이 러너로 간다 —
+# 그때는 Pause 를 풀고 tokyo/rebuild/* 수동 잡을 실행한다
+# (runbooks/도쿄러너_재해때_깨우기.md).
+# ---------------------------------------------------------------------------
+
+validate:tokyo-runner:
+  stage: validate
+  script:
+    - cd terraform/tokyo/runner
+    - terraform fmt -check -diff
+    - terraform init -backend=false -input=false
+    - terraform validate
+  rules:
+    - changes:
+        - terraform/tokyo/runner/**/*
+        - terraform/modules/**/*
+
+plan:tokyo-runner:
+  extends: .aws_oidc_plan
+  stage: plan
+  script:
+    - cd terraform/tokyo/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform plan -input=false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - terraform/tokyo/runner/**/*
+        - terraform/modules/**/*
+
+apply:tokyo-runner:
+  extends: .aws_oidc_apply
+  stage: apply
+  script:
+    - cd terraform/tokyo/runner
+    - terraform init -backend-config=backend.hcl -input=false
+    - terraform apply -input=false -auto-approve
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      changes:
+        - terraform/tokyo/runner/**/*
         - terraform/modules/**/*
       when: manual
   allow_failure: false

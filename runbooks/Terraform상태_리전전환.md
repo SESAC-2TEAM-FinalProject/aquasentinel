@@ -1,11 +1,11 @@
 # 런북 — Terraform 상태 버킷 리전 전환 (서울 ↔ 도쿄 복제본)
 
-- 대상: `terraform/global/bootstrap` 이 만드는 state 버킷과 **13개 컴포넌트의 `backend.hcl`**
+- 대상: `terraform/global/bootstrap` 이 만드는 state 버킷과 **전 컴포넌트의 `backend.hcl`**(2026-10-27 기준 **14개** — `tokyo/runner` 신설분 포함)
 - 작성 2026-10-26 · A(원주)
 - 근거: DR 시나리오(develop) 3.2 `[가정 예외]` · 8.3 「Terraform 상태 버킷 리전 이중화」 · 2026-10-26 실측
 - **이 문서에서 운영을 바꾸는 곳은 1장과 3장뿐입니다.** 나머지는 읽기입니다
 
-> **한 줄** — 「서울이 죽었다」는 가정과 코드가 어긋나 있습니다. `backend.hcl` 13개가 **전부** 서울 버킷을 가리켜서, 진짜 서울 장애면 도쿄를 세우려고 `terraform init` 하는 순간 서울 S3 를 때리고 막힙니다. 복제본을 만들고(**1장**), DR 때 backend 를 바꾸면(**3장**) 풀립니다. 🔴 **복제만 켜고 backend 를 안 바꾸면 아무 의미가 없습니다.**
+> **한 줄** — 「서울이 죽었다」는 가정과 코드가 어긋나 있습니다. `backend.hcl` 이 **전부** 서울 버킷을 가리켜서, 진짜 서울 장애면 도쿄를 세우려고 `terraform init` 하는 순간 서울 S3 를 때리고 막힙니다. 복제본을 만들고(**1장**), DR 때 backend 를 바꾸면(**3장**) 풀립니다. 🔴 **복제만 켜고 backend 를 안 바꾸면 아무 의미가 없습니다.**
 
 ---
 
@@ -16,7 +16,7 @@
 | 원본 버킷 | `aquasentinel-tfstate-379937169195` · 리전 **ap-northeast-2** | `aws s3api get-bucket-location --bucket aquasentinel-tfstate-379937169195` |
 | 버전 관리 | **Enabled** ← 복제의 전제조건이 이미 충족돼 있다 | `aws s3api get-bucket-versioning --bucket aquasentinel-tfstate-379937169195` |
 | 복제 설정 | **없음**(`ReplicationConfigurationNotFoundError`) | `aws s3api get-bucket-replication --bucket aquasentinel-tfstate-379937169195` |
-| `backend.hcl` | **13개 · 전부 원본(서울)** | `./scripts/dr-switch-tfstate-backend.sh` |
+| `backend.hcl` | **14개 · 전부 원본(서울)** | `./scripts/dr-switch-tfstate-backend.sh` |
 | 잠금 방식 | **S3 네이티브 락**(`use_lockfile = true`) — DynamoDB 테이블 없음 | `grep -rn use_lockfile terraform/*/main.tf` |
 | 암호화 | **AES256**(SSE-S3). KMS 가 아니라 복제 역할에 키 권한이 따로 필요 없다 | `aws s3api get-bucket-encryption --bucket aquasentinel-tfstate-379937169195` |
 
@@ -99,7 +99,7 @@ done
 ./scripts/dr-switch-tfstate-backend.sh --to-replica
 ```
 
-13개 `backend.hcl` 의 `bucket` 과 `region` 을 바꿉니다. 🔴 **`key` 는 건드리지 않습니다**(컴포넌트 경로라 그대로 써야 합니다).
+`backend.hcl` **전부**의 `bucket` 과 `region` 을 바꿉니다(스크립트가 `find` 로 세므로 컴포넌트가 늘면 자동으로 따라갑니다). 🔴 **`key` 는 건드리지 않습니다**(컴포넌트 경로라 그대로 써야 합니다).
 
 🔴 **bucket 이름까지 바뀝니다.** S3 버킷 이름은 전역 유일이라 복제본은 `-replica` 가 붙습니다 — `region` 만 바꾸면 안 됩니다. 스크립트가 둘 다 바꾸는 이유입니다.
 
@@ -173,4 +173,5 @@ terraform -chdir=terraform/<컴포넌트> force-unlock <LOCK_ID>
 
 | 날짜 | 내용 |
 |---|---|
-| 2026-10-26 | 신규. `global/bootstrap/replication.tf` + `scripts/dr-switch-tfstate-backend.sh` 와 같이 작성. 🔴 스크립트 작성 중 결함 2건을 잡았습니다 — ⑴ `mapfile`(macOS 기본 bash 3.2 에 없음 · `bash -n` 은 통과) ⑵ `\s`(BSD sed·grep 이 모름 → 13개가 전부 "알 수 없음" 으로 잡혔다). 둘 다 **실행해 봐야 드러나는** 부류였습니다 |
+| 2026-10-26 | 신규. `global/bootstrap/replication.tf` + `scripts/dr-switch-tfstate-backend.sh` 와 같이 작성. 🔴 스크립트 작성 중 결함 2건을 잡았습니다 — ⑴ `mapfile`(macOS 기본 bash 3.2 에 없음 · `bash -n` 은 통과) ⑵ `\s`(BSD sed·grep 이 모름 → 전부 "알 수 없음" 으로 잡혔다). 둘 다 **실행해 봐야 드러나는** 부류였습니다 |
+| 2026-10-27 | `tokyo/runner` 신설로 컴포넌트가 **13 → 14** 개가 되었습니다. 스크립트는 `find` 로 세므로 코드 변경 없이 14개를 잡습니다(`--status` 로 **원본 14 · 알 수 없음 0** 확인). 본문의 「13개」 서술만 고쳤습니다 |

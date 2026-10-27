@@ -1,0 +1,9 @@
+# 사용법: terraform init -backend-config=backend.hcl
+#
+# 🔴 버킷 리전은 ap-northeast-2(서울) 그대로다 — 이 컴포넌트가 도쿄에 리소스를
+# 만들더라도 상태는 다른 12개와 같은 버킷에 둬야 scripts/dr-switch-tfstate-backend.sh
+# 가 한 번에 복제 버킷으로 넘길 수 있다. 서울 리전이 빠진 상황에서는 그 스크립트로
+# 13개 backend.hcl 을 전부 -replica 로 바꾼다(runbooks/Terraform상태_리전전환.md).
+bucket = "aquasentinel-tfstate-<ACCOUNT_ID>"
+key    = "tokyo/runner/terraform.tfstate"
+region = "ap-northeast-2"
