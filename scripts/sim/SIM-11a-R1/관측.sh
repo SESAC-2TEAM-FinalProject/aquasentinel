@@ -13,6 +13,11 @@
 #
 # 환경변수(기본값은 구역 1 / 운영 공통 코드 기준)
 #   NS=web  APP=status-svc  URL=https://zer0cloud.cloud/readyz
+#
+# 🔴 **재실행(R2) 때는 `APP=web-backend` 로 넘겨야 한다** — 2026-10-26 에 객체 이름이
+#    `status-svc` → `web-backend` 로 바뀌었다(gitops `!91` ~ `!93`). 기본값은 R1 이
+#    실제로 쓴 이름 그대로 두었다. 안 넘기면 라벨이 0개를 골라 **차단이 안 걸린 채
+#    Pass 처럼 보인다** — `snap` 의 `target_check` 가 그때 경고한다.
 #   ALARM_HTTPS=aquasentinel-dev-edge-readyz  ALARM_TCP=aquasentinel-dev-edge-tcp
 #   OUT=./증거            # csv · 로그가 쌓이는 곳
 set -uo pipefail
@@ -142,9 +147,35 @@ whereami() {
   esac
 }
 
+# ── 🔴 주입 대상이 실제로 있는지 (2026-10-26 추가) ─────────────
+# 왜 있나: 2026-10-26 에 조회 API 의 쿠버네티스 객체 이름이 `status-svc` →
+# `web-backend` 로 바뀌었다(gitops `!91` ~ `!93`). 이 스크립트와
+# `netpol-block-alb.yaml` 의 기본값은 **R1(2026-10-23 · Pass)이 실제로 쓴
+# `status-svc` 그대로 두었다** — 그때 무엇이 돌았는지가 판정 증거라서다.
+#
+# 🔴 그래서 지금 기본값으로 돌리면 라벨이 **아무 파드도 고르지 않는다.** 주입해도
+# 차단이 안 걸리는데 겉으로는 시험이 끝난 것처럼 보여 **「거짓 Pass」**가 된다.
+# 그 조용한 실패를 여기서 소리나게 막는다.
+#
+# 🔸 이 수는 **라벨이 고른 파드 수**다(건강 상태 집계가 아니다 — 비정상 파드를
+# 셀 때는 READY/STATUS 열을 봐야 한다는 규칙과 용도가 다르다).
+target_check() {
+  local n
+  n=$(kubectl -n "$NS" get pod -l "app=$APP" -o name 2>/dev/null | wc -l | tr -d ' ')
+  printf '  주입 대상: 네임스페이스=%s · 라벨 app=%s → 파드 %s개\n' "$NS" "$APP" "${n:-0}"
+  if [ "${n:-0}" -eq 0 ]; then
+    printf '  🔴🔴 대상 파드가 0개다 — 이대로 주입하면 차단이 걸리지 않는데 "Pass" 로 보인다.\n'
+    printf '       2026-10-26 이름 변경 뒤에는 APP 을 넘겨서 돌려야 한다:\n'
+    printf '         APP=web-backend ./관측.sh <단계>\n'
+    printf '       그리고 netpol-block-alb.yaml 의 podSelector 도 같이 바꿔야 한다.\n'
+    printf '       🔴 R2 를 돌릴 때는 바뀐 이름으로 사전등록을 다시 받는다(R1 문서를 고쳐 쓰지 않는다).\n'
+  fi
+}
+
 snap() {
   hr; echo "[$(ts)]"; hr
   whereami
+  target_check
   ext
   pods
   endpoints
