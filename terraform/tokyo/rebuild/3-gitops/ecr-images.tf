@@ -89,12 +89,11 @@ locals {
     ]
   }
 
-  # root 패치로 다룰 것 = apps/ 에 있는 Application.
-  # web 은 patched_apps 쪽이라 뺀다. collector 는 suspend 패치와 같은 경로를
-  # 써서 root.tf 에서 따로 합쳐 넣으므로 여기서도 뺀다(아래 주석 참고).
-  ecr_images_root = {
-    for app, imgs in local.ecr_images : app => imgs
-    if !contains(["web", "api-module-collector"], app)
+  # root 패치로 다룰 것 = apps/ 에 있는 Application. web 만 뺀다 — 그쪽은
+  # patched_apps 다. collector 처럼 패치가 같이 붙는 Application 도 그냥 둔다 —
+  # images 와 patches 를 합치는 일은 apps-kustomize.tf 가 한다.
+  ecr_images_apps = {
+    for app, imgs in local.ecr_images : app => imgs if app != "web"
   }
 
   # patched_apps(applications.tf)쪽에서 Application 이름으로 찾는다 — 없으면 빈 목록.
