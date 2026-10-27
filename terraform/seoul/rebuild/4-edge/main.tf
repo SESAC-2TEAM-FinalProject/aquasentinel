@@ -95,4 +95,16 @@ module "dns" {
   failover_role           = "PRIMARY"
   enable_health_check     = true
   cluster_name            = data.terraform_remote_state.cluster.outputs.cluster_name
+
+  # 🔴 DR 훈련 전용(2026-10-27) — 운영 레코드와 **헬스체크가 분리된** dr-drill.
+  # 한 호스트만 둔다. 평소에는 서울(PRIMARY)을 가리키고, 훈련 때
+  # drill_health_check_inverted=true 로 apply 하면 그 호스트만 도쿄로 넘어간다.
+  # 운영 도메인 3개는 같은 apply 에서도 그대로다 — 보는 헬스체크가 다르다.
+  #
+  # 🔴 이 서울 apply 는 판정 창 안 "운영 변경"으로 기록한다(계획서 8.2).
+  # 파괴적 주입이 아니라 레코드·헬스체크가 **늘어나는** 변경이므로 R1 제외는
+  # 아니다. dr-drill. 은 웹 HTTPRoute 에 없어서 열면 404 인데(결정 ②로 서울
+  # 3-gitops 는 생략), 이 작업이 증명하는 것은 **DNS 가 넘어가는가**다.
+  drill_hostnames             = ["dr-drill"]
+  drill_health_check_inverted = var.drill_health_check_inverted
 }

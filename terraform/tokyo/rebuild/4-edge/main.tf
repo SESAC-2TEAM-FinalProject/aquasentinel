@@ -66,6 +66,14 @@ module "dns" {
   failover_role           = "SECONDARY"
   enable_health_check     = false
   cluster_name            = data.terraform_remote_state.cluster.outputs.cluster_name
+
+  # 🔴 DR 훈련 전용(2026-10-27) — 서울과 **같은 호스트 이름**을 SECONDARY 로
+  # 등록한다. 서울 쪽 드릴 헬스체크가 뒤집히면 이 레코드가 응답한다.
+  #
+  # 스위치 변수를 받지 않는 이유 — enable_health_check = false 라 도쿄에는
+  # 드릴 헬스체크가 아예 만들어지지 않는다(modules/aws-dns 의 count 조건).
+  # 뒤집는 쪽은 언제나 서울 PRIMARY 다.
+  drill_hostnames = ["dr-drill"]
 }
 
 # ---------------------------------------------------------------------------

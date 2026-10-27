@@ -153,3 +153,74 @@ resource "aws_route53_record" "failover" {
     evaluate_target_health = true
   }
 }
+
+# ---------------------------------------------------------------------------
+# 훈련(DR 드릴) 전용 레코드 — 2026-10-27
+#
+# 왜 별도인가
+#   운영 레코드를 실제로 넘기면 판정 창(2026-10-22 ~ 11-10) 목표 #1 이 떨어진다.
+#   그래서 훈련은 dr-drill. 한 호스트만 넘긴다. 그러려면 그 호스트의 PRIMARY
+#   판정을 **따로** 쥐고 있어야 하고, 그래서 헬스체크도 따로 만든다.
+#   위 aws_route53_health_check.alb 를 재사용하면 뒤집는 순간 운영 레코드
+#   세 개가 전부 같이 넘어간다(계획서 8.1).
+#
+# 왜 invert 인가
+#   서울 ALB 를 실제로 죽이지 않고 "죽은 것으로 보이게"만 하려면 판정을
+#   뒤집는 수밖에 없다. ALB·파드·노드는 그대로이므로 판정 창 지표가 떨어지지
+#   않는다 — 계획서 1.2 "서울에 파괴적 주입을 하지 않는다"가 이 뜻이다.
+#
+# 🔴 서울(PRIMARY)에도 만든다
+#   SECONDARY 만 있으면 넘어갈 대상이 없어 "전환"이 성립하지 않는다. 서울
+#   4-edge apply 는 계획서 8.2 에 "창 안 운영 변경"으로 기록한다(파괴적
+#   주입이 아니므로 R1 제외는 아니다).
+resource "aws_route53_health_check" "drill" {
+  count = var.enable_health_check && length(local.drill_records) > 0 ? 1 : 0
+
+  fqdn              = data.aws_lb.gateway[0].dns_name
+  port              = 443
+  type              = "TCP"
+  failure_threshold = 3
+  request_interval  = 30
+
+  # 🔴 이 한 줄이 훈련 스위치다.
+  invert_healthcheck = var.drill_health_check_inverted
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-drill-healthcheck"
+    Role = "dr-drill"
+  })
+}
+
+locals {
+  # 운영 failover_records 와 같은 가드 — ALB 를 못 찾으면 레코드를 만들지
+  # 않는다(아래 alias 블록이 data.aws_lb.gateway[0] 를 참조하기 때문).
+  # apex 는 variables.tf 의 validation 이 막으므로 여기서 분기하지 않는다.
+  drill_records = length(var.drill_hostnames) > 0 && length(data.aws_lb.gateway) > 0 ? {
+    for h in var.drill_hostnames : h => "${h}.${var.domain_name}"
+  } : {}
+}
+
+resource "aws_route53_record" "drill" {
+  for_each = local.drill_records
+
+  zone_id = data.aws_route53_zone.this.zone_id
+  name    = each.value
+  type    = "A"
+
+  # 운영 레코드와 같은 식별자를 쓴다(서울 dev / 도쿄 dr-tokyo). 레코드 **이름**이
+  # 달라서 운영 레코드와 충돌하지 않는다.
+  set_identifier = var.environment
+
+  failover_routing_policy {
+    type = var.failover_role
+  }
+
+  # 🔴 운영 헬스체크(aws_route53_health_check.alb)가 아니라 드릴 것을 본다.
+  health_check_id = length(aws_route53_health_check.drill) > 0 ? aws_route53_health_check.drill[0].id : null
+
+  alias {
+    name                   = data.aws_lb.gateway[0].dns_name
+    zone_id                = data.aws_lb.gateway[0].zone_id
+    evaluate_target_health = true
+  }
+}

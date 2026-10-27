@@ -20,3 +20,13 @@ output "alb_dns_name" {
   description = "enable_failover_routing=false거나 ALB가 아직 없으면 null."
   value       = one(data.aws_lb.gateway[*].dns_name)
 }
+
+output "drill_health_check_id" {
+  description = "훈련 전용 헬스체크 ID. drill_hostnames 가 비었거나 enable_health_check=false 면 null — 뒤집기 전에 이 값으로 대상을 확인한다."
+  value       = one(aws_route53_health_check.drill[*].id)
+}
+
+output "drill_fqdns" {
+  description = "만들어진 훈련 전용 레코드의 전체 이름 목록."
+  value       = values(local.drill_records)
+}
