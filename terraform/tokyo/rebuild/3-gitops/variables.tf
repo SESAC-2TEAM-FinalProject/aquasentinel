@@ -124,3 +124,77 @@ variable "drill_hostname" {
   type        = string
   default     = "dr-drill"
 }
+
+# ───────────────────────────────────────────────────────────────────────────
+# Stage 2 — 서울 Primary 에 직접 붙는 스트리밍 복제 (2026-10-27)
+#
+# 평소(Stage 0)는 서울이 WAL 을 S3 에 올리고 도쿄가 거기서 읽는다.
+# archive_timeout 이 5분이라 최대 5분치가 밀린다. Stage 2 는 도쿄가 서울
+# Primary 에 TCP 로 직접 붙어 RPO 를 수초로 줄인다.
+#
+# 🔴 **기본은 꺼짐이다.** 1부(Stage 0)는 이 블록 없이 돌아야 하고, 켜면
+#    서울 내부 NLB 가 **이미 떠 있어야** 한다(gitops pg-rw-internal-nlb.yaml).
+#    없는 상태에서 켜면 아래 data "aws_lb" 조회가 실패해 apply 가 멈춘다.
+# ───────────────────────────────────────────────────────────────────────────
+
+variable "enable_stage2_streaming" {
+  description = "true 면 도쿄가 서울 Primary 에 직접 붙는다(Stage 2). false 면 S3 로그 수송만(Stage 0)."
+  type        = bool
+  default     = false
+}
+
+variable "seoul_region" {
+  type    = string
+  default = "ap-northeast-2"
+}
+
+variable "seoul_pg_nlb_name" {
+  description = "서울 내부 NLB 이름. gitops pg-rw-internal-nlb.yaml 의 aws-load-balancer-name 주석과 같아야 한다."
+  type        = string
+  default     = "aquasentinel-dev-pg-rw-internal"
+}
+
+# 🔸 NLB 대신 고정 DNS 이름을 쓰고 싶을 때(예: Route53 레코드를 만들어
+#    verify-full 로 가는 경우). 비어 있으면 위 NLB 를 조회해서 쓴다.
+variable "seoul_pg_host_override" {
+  description = "서울 Postgres 접속 호스트를 직접 지정. 비우면 seoul_pg_nlb_name 으로 조회한다."
+  type        = string
+  default     = ""
+}
+
+# 🔴 기본값이 verify-ca 인 이유 — 서울 서버 인증서의 SAN 에 **NLB 이름이 없다**
+#    (2026-10-27 실측: aquasentinel-pg-rw.…svc.cluster.local 등 클러스터 안
+#    이름만 있다). NLB 주소로 붙으면서 verify-full 을 쓰면 이름이 안 맞아
+#    실패한다. verify-ca 는 **우리 CA 로 서명됐는지**는 확인한다 — CNPG 자체
+#    CA 라 그 CA 로 서명된 인증서는 우리 클러스터 것뿐이므로 검증 의미가 있다.
+#
+#    verify-full 로 가려면 서울 spec.certificates.serverAltDNSNames 에 호스트를
+#    더해야 하는데, 그건 **서울 인증서 재발급**(창 안 운영 변경)이고 NLB DNS 는
+#    만들기 전엔 모른다(임의 접미사). 고정 이름을 쓰려면 Route53 레코드가
+#    하나 더 필요하다 — 그 경우 seoul_pg_host_override 와 함께 쓴다.
+variable "seoul_pg_sslmode" {
+  description = "서울 Postgres 에 붙을 때의 sslmode."
+  type        = string
+  default     = "verify-ca"
+
+  validation {
+    condition     = contains(["verify-ca", "verify-full"], var.seoul_pg_sslmode)
+    error_message = "verify-ca 또는 verify-full 만 허용한다 — require/disable 은 서버를 검증하지 않는다."
+  }
+}
+
+# 🔴 서울에서 복사해 온 인증서가 들어갈 **도쿄 쪽** 시크릿 이름이다.
+#    도쿄 CNPG 도 자기 클러스터용으로 aquasentinel-pg-ca ·
+#    aquasentinel-pg-replication 을 **스스로 만든다**. 같은 이름을 쓰면
+#    충돌하므로 -seoul- 을 끼워 구분한다.
+variable "seoul_ca_secret_name" {
+  description = "서울 CA(ca.crt)를 담은 도쿄 네임스페이스의 시크릿 이름."
+  type        = string
+  default     = "aquasentinel-pg-seoul-ca"
+}
+
+variable "seoul_replication_secret_name" {
+  description = "서울 streaming_replica 클라이언트 인증서(tls.crt·tls.key)를 담은 도쿄 시크릿 이름."
+  type        = string
+  default     = "aquasentinel-pg-seoul-replication"
+}

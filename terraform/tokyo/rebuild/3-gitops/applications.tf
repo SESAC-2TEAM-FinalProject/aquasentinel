@@ -80,18 +80,12 @@ locals {
             {
               op   = "add"
               path = "/spec/externalClusters"
-              value = [
-                {
-                  name = "seoul"
-                  plugin = {
-                    name = "barman-cloud.cloudnative-pg.io"
-                    parameters = {
-                      barmanObjectName = "aquasentinel-pg-seoul-source"
-                      serverName       = "aquasentinel-pg"
-                    }
-                  }
-                }
-              ]
+              # 🔴 값이 stage2-streaming.tf 로 옮겨졌다(2026-10-27).
+              #   Stage 2 를 켜면 같은 항목에 connectionParameters 와 TLS 참조
+              #   3종이 **더해진다** — plugin 은 그대로 남아 스트리밍이 끊겼을 때
+              #   S3 아카이브로 폴백한다. 기본(enable_stage2_streaming = false)은
+              #   아래 그대로 로그 수송만이다.
+              value = local.seoul_external_clusters
             }
           ])
         },

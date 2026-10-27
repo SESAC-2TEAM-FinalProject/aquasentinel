@@ -49,6 +49,15 @@ provider "aws" {
   }
 }
 
+# 🔴 Stage 2(직접 전송) 전용 — 서울 내부 NLB 주소를 읽기 위한 별칭.
+#   읽기만 한다. 이 컴포넌트는 서울에 **아무것도 만들지 않는다**.
+#   var.enable_stage2_streaming 이 false 면 이 provider 를 쓰는 data 가
+#   count = 0 이라 호출 자체가 없다(1부 경로).
+provider "aws" {
+  alias  = "seoul"
+  region = var.seoul_region
+}
+
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
