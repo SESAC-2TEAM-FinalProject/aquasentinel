@@ -375,6 +375,15 @@ locals {
               op    = "replace"
               path  = "/spec/client/appUrl"
               value = "https://${data.terraform_remote_state.persistent.outputs.domain_name}"
+            },
+            # 로그아웃 복귀 주소 (2026-10-27) — 서울과 같은 이유. add("/-")
+            # 라 반드시 위 replace op 들 뒤에 둔다. 이게 없으면 DR 전환 뒤
+            # 도쿄에서 같은 증상(로그아웃 400 · SSO 세션 미종료)이 재발한다.
+            # 🔸 드릴 주소(dr-drill.)는 서울에만 넣는다 — 서울 쪽 주석 참고.
+            {
+              op    = "add"
+              path  = "/spec/client/redirectUris/-"
+              value = "https://${data.terraform_remote_state.persistent.outputs.domain_name}/"
             }
           ])
         },
