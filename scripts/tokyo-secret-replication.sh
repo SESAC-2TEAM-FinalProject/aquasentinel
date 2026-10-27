@@ -31,12 +31,26 @@
 # 쓰는 법
 #   ./tokyo-secret-replication.sh              # 무엇이 없는지 보기만 (기본)
 #   ./tokyo-secret-replication.sh --apply      # 복제 6개 설정
-#   ./tokyo-secret-replication.sh --apply-own  # 도쿄 전용 2개 생성(서울 값 복사)
+#   ./tokyo-secret-replication.sh --apply-own  # 도쿄 전용 3개 생성
 #
-#   # 3개 전부 — alertmanager 는 deadman 만 도쿄 전용 주소로 교체한다.
-#   # 🔴 환경변수로 넘긴다. argv(--deadman-url)는 ps 에 보인다.
-#   TOKYO_DEADMAN_URL='https://hc-ping.com/<도쿄체크>' \
+#   # 🔴 값은 전부 환경변수로 넘긴다 — argv 는 ps 에 보이고 셸 이력에도 남는다.
+#   TOKYO_CRITICAL_WEBHOOK='https://discord.com/api/webhooks/…' \
+#   TOKYO_WARNING_WEBHOOK='https://discord.com/api/webhooks/…'  \
+#   TOKYO_ARGOCD_WEBHOOK='https://discord.com/api/webhooks/…'   \
+#   TOKYO_DEADMAN_URL='https://hc-ping.com/<도쿄체크>'          \
 #       ./tokyo-secret-replication.sh --apply-own
+#
+#   넷 다 **필수**다(2026-10-27 재희님 지시 — 알림 수신처는 전부 도쿄 전용).
+#   하나라도 없으면 그 시크릿을 **만들지 않고 건너뛴다** — 서울 웹훅이 도쿄로
+#   조용히 복사되는 쪽이 훨씬 나쁘기 때문이다. 같은 수신처를 공유하면 도쿄가
+#   보낸 핑·알림이 「서울이 죽었다」를 가린다.
+#
+#   🔸 grafana-oidc-client-secret 은 기본이 **서울 값 복사**다(2026-10-26 결정,
+#      위 주석). 도쿄 전용 값으로 가기로 바뀌면 그때만 아래를 더한다:
+#        TOKYO_GRAFANA_OIDC_SECRET='<새 값>'
+#        (이 시크릿은 평문이라 JSON 키가 아니라 **값 전체**가 바뀐다 — 2026-10-27 실측)
+#      🔴 그 경우 훈련 중 Grafana 로그인이 안 된다 — 도쿄 Grafana 가 훈련
+#      중에는 서울 Keycloak 을 보기 때문이다(2026-10-27 실측).
 #
 # 안전장치
 #   - 운영 계정(379937169195)에서만 동작한다 — 시험 계정에서 돌리면 중단
@@ -53,6 +67,12 @@ APPLY=false
 APPLY_OWN=false
 # 환경변수 쪽이 기본이다 — argv 는 ps 에 보인다(아래 --deadman-url 주석).
 DEADMAN_URL="${TOKYO_DEADMAN_URL:-}"
+# 🔴 2026-10-27 추가 — 알림 수신처를 전부 도쿄 전용으로(재희님 지시).
+CRITICAL_WEBHOOK="${TOKYO_CRITICAL_WEBHOOK:-}"
+WARNING_WEBHOOK="${TOKYO_WARNING_WEBHOOK:-}"
+ARGOCD_WEBHOOK="${TOKYO_ARGOCD_WEBHOOK:-}"
+# 🔸 선택 — 비우면 서울 값 복사(2026-10-26 결정).
+GRAFANA_OIDC_SECRET="${TOKYO_GRAFANA_OIDC_SECRET:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,10 +91,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$DEADMAN_URL" && "$DEADMAN_URL" != https://* ]]; then
-  echo "중단 — 데드맨 주소는 https:// 로 시작해야 합니다" >&2
-  exit 2
-fi
+# 넷 다 https 여야 한다. 오타를 여기서 잡지 못하면 CR 이 조용히 거부된다.
+for _pair in "데드맨 주소:$DEADMAN_URL" "critical 웹훅:$CRITICAL_WEBHOOK" \
+             "warning 웹훅:$WARNING_WEBHOOK" "argocd 웹훅:$ARGOCD_WEBHOOK"; do
+  _label="${_pair%%:*}"; _val="${_pair#*:}"
+  if [[ -n "$_val" && "$_val" != https://* ]]; then
+    echo "중단 — $_label 는 https:// 로 시작해야 합니다" >&2
+    exit 2
+  fi
+done
+unset _pair _label _val
 
 # 서울에서 도쿄로 복제할 것 — 값이 서울과 같아야 하는 것들
 REPLICATE=(
@@ -162,7 +188,7 @@ for name in "${REPLICATE[@]}"; do
 done
 
 echo
-echo "## 도쿄 전용 ${#TOKYO_OWN[@]}개 (이름은 도쿄 것 · 값은 서울 원본 복사 · deadman 은 교체)"
+echo "## 도쿄 전용 ${#TOKYO_OWN[@]}개 (이름은 도쿄 것 · 수신처는 도쿄 전용 · 나머지는 서울 값 복사)"
 
 # 값을 argv 로 넘기지 않는다(ps 에 보인다) — 권한 0600 임시 파일로 건넨다.
 tmp=""
@@ -187,25 +213,53 @@ for row in "${TOKYO_OWN[@]}"; do
     continue
   fi
 
-  # 🔴 데드맨만 도쿄 전용 값이어야 한다(위 ⑵) — 주소가 없으면 만들지 않는다.
-  needs_deadman=false
-  [[ "$name" == *alertmanager-receivers ]] && needs_deadman=true
+  # 🔴 도쿄 전용 값으로 덮어쓸 JSON 키 — "키=환경변수값" 목록(2026-10-27).
+  # 알림 수신처는 전부 도쿄 전용이어야 한다. 같은 수신처를 공유하면 도쿄가
+  # 보낸 것이 「서울이 죽었다」를 가린다.
+  overrides=()        # JSON 값일 때 — 바꿀 "키=값" 목록
+  raw_override=""     # 평문 값일 때 — 통째로 바꿀 값
+  missing_env=()
+  case "$name" in
+    *alertmanager-receivers)
+      [[ -n "$CRITICAL_WEBHOOK" ]] && overrides+=("critical=$CRITICAL_WEBHOOK") || missing_env+=("TOKYO_CRITICAL_WEBHOOK")
+      [[ -n "$WARNING_WEBHOOK"  ]] && overrides+=("warning=$WARNING_WEBHOOK")   || missing_env+=("TOKYO_WARNING_WEBHOOK")
+      [[ -n "$DEADMAN_URL"      ]] && overrides+=("deadman=$DEADMAN_URL")       || missing_env+=("TOKYO_DEADMAN_URL")
+      ;;
+    *argocd-notifications)
+      [[ -n "$ARGOCD_WEBHOOK" ]] && overrides+=("discord=$ARGOCD_WEBHOOK") || missing_env+=("TOKYO_ARGOCD_WEBHOOK")
+      ;;
+    *grafana-oidc-client-secret)
+      # 🔸 선택이다 — 비우면 서울 값 그대로(2026-10-26 결정).
+      # 🔴 이 시크릿은 JSON 이 아니라 **평문**이다(2026-10-27 실측, 44자).
+      #    gitops manifests/grafana/secret/oidc-client-external-secret.yaml 의
+      #    ExternalSecret 에 property: 가 없어 SecretString **전체**를 그대로 쓴다
+      #    (`secretKey: secret` 은 K8s 템플릿 안 별칭이지 JSON 키가 아니다).
+      #    그래서 overrides 로 넣으면 안 된다 — JSON 파서가 첫 줄에서
+      #    "서울 값이 JSON 이 아닙니다" 로 중단한다.
+      [[ -n "$GRAFANA_OIDC_SECRET" ]] && raw_override="$GRAFANA_OIDC_SECRET"
+      ;;
+  esac
 
-  if $needs_deadman && [[ -z "$DEADMAN_URL" ]]; then
-    echo "건너뜀 — TOKYO_DEADMAN_URL 이 필요합니다"
-    printf '      → 서울 값을 그대로 복사하면 도쿄가 서울 데드맨을 대신 채워\n'
-    printf '        「서울이 죽었다」가 가려집니다(2026-10-26 재희님 결정: 도쿄 전용 체크).\n'
-    printf '        Healthchecks.io 에 도쿄 전용 체크를 만들고(README 22행 — 서울·도쿄가\n'
-    printf '        다른 UUID 를 쓰는 것이 원래 설계다) 그 핑 주소로 다시 돌리십시오:\n'
-    printf "          TOKYO_DEADMAN_URL='https://hc-ping.com/<도쿄체크>' %s --apply-own\n" "$(basename "$0")"
+  if (( ${#missing_env[@]} > 0 )); then
+    echo "건너뜀 — 환경변수가 필요합니다: ${missing_env[*]}"
+    printf '      → 서울 값을 그대로 복사하면 도쿄 알림이 **서울 수신처**로 갑니다.\n'
+    printf '        그러면 도쿄가 보낸 것이 「서울이 죽었다」를 가립니다\n'
+    printf '        (2026-10-26·10-27 재희님 결정: 수신처는 도쿄 전용).\n'
+    printf '        Discord #regiondr-tokyo 의 웹훅과 Healthchecks.io 도쿄 체크\n'
+    printf '        핑 주소를 환경변수로 넘겨 다시 돌리십시오 — 머리말 「쓰는 법」 참고.\n'
     continue
   fi
 
   if ! $APPLY_OWN; then
-    if $needs_deadman; then
-      echo "생성 예정 ← $src (deadman 만 도쿄 전용 주소로 교체)"
+    if (( ${#overrides[@]} > 0 )); then
+      # 🔴 값이 아니라 **키 이름만** 찍는다.
+      _keys=(); for _o in "${overrides[@]}"; do _keys+=("${_o%%=*}"); done
+      echo "생성 예정 ← $src (도쿄 전용으로 교체할 키: ${_keys[*]})"
+      unset _keys _o
+    elif [[ -n "$raw_override" ]]; then
+      echo "생성 예정 ← $src (도쿄 전용 값으로 **통째** 교체 — 평문)"
     else
-      echo "생성 예정 ← $src"
+      echo "생성 예정 ← $src (서울 값 그대로)"
     fi
     printf '      → %s\n' "$note"
     continue
@@ -225,13 +279,27 @@ for row in "${TOKYO_OWN[@]}"; do
     continue
   fi
 
+  # 🔴 평문 시크릿은 JSON 패치가 아니라 통째 교체다. 값은 출력하지 않는다.
+  # 끝에 줄바꿈을 붙이지 않는다 — Secrets Manager 는 그 한 글자까지 값으로 본다.
+  if [[ -n "$raw_override" ]]; then
+    printf '%s' "$raw_override" > "$tmp"
+  fi
+
   # 🔴 deadman 키만 도쿄 전용 주소로 바꾼다. sed 가 아니라 JSON 파서로 하는 이유 —
   # 웹훅 URL 에 / 와 ? 가 들어 있어 구분자 충돌이 나고, 조용히 깨진 JSON 을 넣으면
   # 오퍼레이터가 CR 전체를 거부한다(위 ⑶). 값은 출력하지 않는다.
-  if $needs_deadman; then
-    if ! DEADMAN_URL="$DEADMAN_URL" python3 - "$tmp" <<'PYEOF'
-import json, os, sys
+  if (( ${#overrides[@]} > 0 )); then
+    # 🔴 sed 가 아니라 JSON 파서로 바꾼다 — 웹훅 URL 에 / 와 ? 가 들어 있어
+    # 구분자 충돌이 나고, 조용히 깨진 JSON 을 넣으면 오퍼레이터가 CR 전체를
+    # 거부한다. 값은 출력하지 않는다. 덮어쓸 값은 argv 가 아니라 **stdin** 으로
+    # 넘긴다 — argv 는 ps 에 보인다.
+    if ! printf '%s\0' "${overrides[@]}" | python3 - "$tmp" <<'PYEOF'
+import json, sys
 path = sys.argv[1]
+# stdin 은 "키=값" 을 NUL 로 구분한 목록. 값에 = 가 들어 있어도 1회만 자른다.
+pairs = [q for q in sys.stdin.buffer.read().decode().split("\0") if q]
+over = dict(q.split("=", 1) for q in pairs)
+
 with open(path) as f:
     raw = f.read()
 try:
@@ -240,16 +308,18 @@ except json.JSONDecodeError as e:
     sys.exit("서울 값이 JSON 이 아닙니다: %s" % e)
 if not isinstance(obj, dict):
     sys.exit("서울 값이 JSON 객체가 아닙니다")
-missing = [k for k in ("critical", "warning", "deadman") if k not in obj]
-if missing:
-    # 지금 고치지 않으면 도쿄에서 CR 전체가 거부된다 — 여기서 멈추는 쪽이 낫다.
-    sys.exit("서울 값에 키가 없습니다: %s" % ", ".join(missing))
-obj["deadman"] = os.environ["DEADMAN_URL"]
+
+# 서울 값에 그 키가 애초에 없으면 구조가 바뀐 것이다 — 조용히 더하지 않고 멈춘다.
+absent = [k for k in over if k not in obj]
+if absent:
+    sys.exit("서울 값에 키가 없습니다: %s" % ", ".join(sorted(absent)))
+
+obj.update(over)
 with open(path, "w") as f:
     json.dump(obj, f, ensure_ascii=False)
 PYEOF
     then
-      echo "실패 — deadman 교체 중 중단(위 메시지 참고)"
+      echo "실패 — 도쿄 전용 값 교체 중 중단(위 메시지 참고)"
       rm -f "$tmp"; tmp=""
       continue
     fi
@@ -258,7 +328,7 @@ PYEOF
   if ERR=$(aws secretsmanager create-secret \
       --name "$name" \
       --region "$TOKYO" \
-      --description "도쿄 DR 전용 — $src 값 복사$($needs_deadman && echo " · deadman 은 도쿄 전용")(2026-10-26)" \
+      --description "도쿄 DR 전용 — $src 기반$( { (( ${#overrides[@]} > 0 )) || [[ -n "$raw_override" ]]; } && echo " · 도쿄 전용 값 교체")(2026-10-27)" \
       --secret-string "file://$tmp" \
       --output text 2>&1 >/dev/null); then
     echo "만들었습니다 ← $src"

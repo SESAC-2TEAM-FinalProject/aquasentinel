@@ -460,13 +460,31 @@ locals {
       patches = concat([
         {
           target = { kind = "HTTPRoute", name = "aquasentinel-web" }
-          patch = jsonencode([
+          patch = jsonencode(concat([
             {
               op    = "replace"
               path  = "/spec/hostnames/0"
               value = data.terraform_remote_state.persistent.outputs.domain_name
             }
-          ])
+            ],
+            # 🔴 DR 훈련 드릴 주소 (2026-10-27, 계획서 7장 #9).
+            #
+            # 없으면 전환 뒤 dr-drill. 이 Gateway 에서 404 다 — dig 로 DNS 가
+            # 넘어간 것은 보이는데 화면으로는 아무것도 안 보인다. Gateway
+            # 리스너에는 hostname 제한이 없어(from: All, 실물 확인) HTTPRoute
+            # 에 호스트를 더하는 것만으로 붙는다. 인증서도 도쿄 ACM 에
+            # *.aquasentinel.cloud SAN 이 있어 HTTPS 가 뜬다(실물 확인).
+            #
+            # 🔴 add("/-" = 목록 맨 끝) 는 반드시 위 replace 뒤에 둔다 — add 가
+            # 목록 길이를 바꾸므로 앞에 두면 인덱스 기반 replace 의 대상이
+            # 밀린다(서울 Keycloak 패치 7763a2f 와 같은 제약).
+            var.drill_hostname == "" ? [] : [
+              {
+                op    = "add"
+                path  = "/spec/hostnames/-"
+                value = "${var.drill_hostname}.${data.terraform_remote_state.persistent.outputs.domain_name}"
+              }
+          ]))
         },
         # 상태조회 캐시 주소(2026-10-16) — 서울과 같게 이 리전 ElastiCache 기본 엔드포인트를 넣는다
         {

@@ -3,6 +3,7 @@
 - 대상: `terraform/global/bootstrap` 이 만드는 state 버킷과 **전 컴포넌트의 `backend.hcl`**(2026-10-27 기준 **14개** — `tokyo/runner` 신설분 포함)
 - 작성 2026-10-26 · A(원주)
 - 근거: DR 시나리오(develop) 3.2 `[가정 예외]` · 8.3 「Terraform 상태 버킷 리전 이중화」 · 2026-10-26 실측
+- 🔴 **훈련 단계**(계획서 3.1 · 부록 B): **1장은 1부 *전* 사전 조건 #4** — 복제 적용 + 1회 전량 동기화(✅ **2026-10-27 완료** · 31/31 ETag 대조) / **3장은 1부 0단계** — backend 를 복제본으로 바꿔 「서울이 없다」를 성립시킴
 - **이 문서에서 운영을 바꾸는 곳은 1장과 3장뿐입니다.** 나머지는 읽기입니다
 
 > **한 줄** — 「서울이 죽었다」는 가정과 코드가 어긋나 있습니다. `backend.hcl` 이 **전부** 서울 버킷을 가리켜서, 진짜 서울 장애면 도쿄를 세우려고 `terraform init` 하는 순간 서울 S3 를 때리고 막힙니다. 복제본을 만들고(**1장**), DR 때 backend 를 바꾸면(**3장**) 풀립니다. 🔴 **복제만 켜고 backend 를 안 바꾸면 아무 의미가 없습니다.**
@@ -63,6 +64,21 @@ aws s3 sync \
 ```
 
 > `sync` 로 넣은 객체는 **복제가 아니라 복사**라 복제 상태(`ReplicationStatus`)가 비어 있습니다. 정상입니다 — 내용은 같고, 이후 변경분은 복제가 따라갑니다.
+
+🔴 **복제본에 반드시 있어야 하는 것 — `seoul/persistent/terraform.tfstate`** (2026-10-27 실측)
+
+도쿄 `rebuild/2-cluster` 가 **서울** state 를 읽습니다(`irsa.tf` 의
+`data "terraform_remote_state" "seoul_persistent"`). 도쿄 CNPG 가 서울
+`observability` 버킷의 WAL 을 S3 API 로 읽어야 해서, 그 **버킷 ARN 과
+`cloudnativepg_prefix`** 를 거기서 가져옵니다.
+
+→ 「서울이 없다」 가정에서 **1부 3단계(`2-cluster` apply)가 이 파일에 걸립니다.**
+`sync` 가 이것까지 넣어 주므로 1.2 를 빠뜨리면 안 됩니다.
+
+🔸 복제본의 `seoul/persistent` 는 **스냅숏**입니다. 서울 `persistent` 를 고치면
+그 뒤 변경분은 복제가 따라가지만, 복제를 켜기 전 상태는 `sync` 시점으로
+멈춰 있습니다. `persistent` 는 거의 바뀌지 않아 실무상 문제가 없지만,
+서울 `persistent` 를 apply 한 날에는 복제가 도착했는지 1.3 으로 확인하십시오.
 
 ### 1.3 확인
 
