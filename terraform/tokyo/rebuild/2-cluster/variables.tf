@@ -182,6 +182,17 @@ variable "loki_service_account_name" {
   default = "loki"
 }
 
+variable "grafana_namespace" {
+  type    = string
+  default = "monitoring"
+}
+
+variable "grafana_service_account_name" {
+  description = "차트가 기본으로 만드는 SA 이름이 이미 grafana 라 그 이름을 그대로 쓴다 — 3-gitops bootstrap.tf 가 같은 이름으로 만들어 role-arn 을 붙인다(서울과 같은 패턴)."
+  type        = string
+  default     = "grafana"
+}
+
 variable "cloudnativepg_namespace" {
   type    = string
   default = "aquasentinel-db"
