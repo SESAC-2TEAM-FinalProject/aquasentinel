@@ -103,3 +103,24 @@ variable "gitops_revision" {
   type        = string
   default     = "main"
 }
+
+variable "drill_hostname" {
+  description = <<-EOT
+    🔴 DR 훈련(SIM-11) 전용 호스트의 서브도메인 prefix. 웹 HTTPRoute 의
+    hostnames 에 **더해서**, 전환 뒤 도쿄에서 그 주소가 응답하게 한다.
+    빈 문자열이면 더하지 않는다.
+
+    🔴 **4-edge 의 drill_hostnames 와 같은 값이어야 한다.** 거기서 Route53
+    레코드를 만들고 여기서 그 주소를 받는다. 3-gitops 가 4-edge 보다 **먼저**
+    돌기 때문에 remote_state 로 끌어올 수 없어 값이 두 곳에 있다. 한쪽만
+    고치면 **DNS 는 넘어가는데 화면은 404** 가 된다.
+
+    서울에는 넣지 않는다(결정 ② · 2026-10-27) — 전환 **뒤** 도쿄에서만
+    응답하면 되고, 서울 3-gitops apply 를 한 번이라도 줄이기 위해서다.
+    🔸 Keycloak 클라이언트의 드릴 주소는 별건으로 **서울에** 들어가 있다
+    (7763a2f) — 훈련 중 로그인 서버가 서울이기 때문이고, 호스트 라우팅과는
+    다른 이야기다.
+  EOT
+  type        = string
+  default     = "dr-drill"
+}
