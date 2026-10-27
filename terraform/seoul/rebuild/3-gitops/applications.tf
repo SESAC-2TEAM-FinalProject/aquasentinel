@@ -192,6 +192,38 @@ locals {
               op    = "replace"
               path  = "/spec/client/appUrl"
               value = "https://${data.terraform_remote_state.persistent.outputs.domain_name}"
+            },
+            # 아래는 전부 add("/-" = 목록 맨 끝) 다 — 반드시 위 replace op 들
+            # 뒤에 둔다. add 는 목록 길이를 바꾸므로 앞에 두면 인덱스 기반
+            # replace 의 대상이 밀린다.
+            #
+            # 로그아웃 복귀 주소 (2026-10-27). redirectUris 에 "/" 가 없으면
+            # Keycloak 이 post_logout_redirect_uri 를 400 으로 막고 SSO 세션을
+            # 끊지 않는다(= 로그아웃해도 재로그인 때 비밀번호를 안 묻는다).
+            # 원인은 gitops 매니페스트 주석 참고(2026-10-01 3178f52).
+            {
+              op    = "add"
+              path  = "/spec/client/redirectUris/-"
+              value = "https://${data.terraform_remote_state.persistent.outputs.domain_name}/"
+            },
+            # DR 훈련(SIM-11) 전용 드릴 주소 — 서울에만 넣는다.
+            # 훈련은 dr-drill. 레코드만 도쿄로 넘기고 auth. 는 서울에 두므로,
+            # 도쿄 웹이 보는 로그인 서버가 서울 Keycloak 이다(도쿄 3-gitops 가
+            # OIDC_ISSUER 를 패치하지 않는다 — 2026-10-27 전수 확인). 그래서
+            # 서울 클라이언트에 드릴 주소가 없으면 훈련에서 로그인이 "잘못된
+            # 리디렉션 URI" 로 막히고, 대시보드는 로그인 뒤에 있어 본문도 못
+            # 본다. 도쿄 쪽에는 불필요하다 — 실제 DR 에서는 auth. 도 함께
+            # 넘어가고 도쿄 Keycloak DB 가 서울 백업 복구본이라 운영 주소가
+            # 이미 등록돼 있다.
+            {
+              op    = "add"
+              path  = "/spec/client/redirectUris/-"
+              value = "https://dr-drill.${data.terraform_remote_state.persistent.outputs.domain_name}/auth/callback"
+            },
+            {
+              op    = "add"
+              path  = "/spec/client/webOrigins/-"
+              value = "https://dr-drill.${data.terraform_remote_state.persistent.outputs.domain_name}"
             }
           ])
         },
