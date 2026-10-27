@@ -2,14 +2,14 @@
 # Terraform 상태 backend 를 서울 ↔ 도쿄 복제본으로 전환 (2026-10-26)
 #
 # 왜 필요한가
-#   DR 시나리오의 「서울이 죽었다」 가정과 코드가 어긋나 있다. 13개 컴포넌트의
+#   DR 시나리오의 「서울이 죽었다」 가정과 코드가 어긋나 있다. 전 컴포넌트의
 #   backend.hcl 이 **전부** 서울 버킷(ap-northeast-2)을 가리킨다. 진짜 서울
 #   장애면 도쿄를 세우려고 `terraform init` 하는 순간 서울 S3 를 때리고 막힌다.
 #   DR 시나리오 문서가 `[가정 예외]` 로 적어 둔 그 지점이고, 복제본만 만들어도
 #   backend 를 바꾸지 않으면 아무 의미가 없다.
 #
 #   🔴 bucket 이름까지 바뀐다. S3 버킷 이름은 전역 유일이라 복제본은
-#   `-replica` 가 붙는다 — region 만 바꾸면 안 된다. 손으로 13개를 고치면
+#   `-replica` 가 붙는다 — region 만 바꾸면 안 된다. 손으로 전부 고치면
 #   하나를 빠뜨리고, 그 하나가 장애 한가운데서 드러난다. 그래서 스크립트다.
 #
 # 쓰는 법
@@ -59,7 +59,7 @@ if [ "${#FILES[@]}" -eq 0 ]; then
 fi
 
 # 🔴 \s 를 쓰면 안 된다 — macOS(BSD) 의 sed·grep 은 \s 를 모른다. 치환이 조용히
-# 실패해서 줄 전체가 값으로 잡히고, 13개가 전부 "알 수 없음" 이 된다(2026-10-26 실측).
+# 실패해서 줄 전체가 값으로 잡히고, 전부 "알 수 없음" 이 된다(2026-10-26 실측).
 # POSIX 문자 클래스 [[:space:]] 는 BSD·GNU 양쪽에서 동작한다.
 bucket_of() { grep -E '^[[:space:]]*bucket[[:space:]]*=' "$1" | head -1 | sed 's/.*=[[:space:]]*"\(.*\)".*/\1/'; }
 region_of() { grep -E '^[[:space:]]*region[[:space:]]*=' "$1" | head -1 | sed 's/.*=[[:space:]]*"\(.*\)".*/\1/'; }
@@ -101,7 +101,7 @@ fi
 echo "전환: ${FROM_BUCKET} (${FROM_REGION}) → ${TO_BUCKET} (${TO_REGION})"
 echo
 
-# 🔴 가려는 쪽 버킷이 실재하는지 먼저 본다. 없는데 바꾸면 13개를 전부
+# 🔴 가려는 쪽 버킷이 실재하는지 먼저 본다. 없는데 바꾸면 전부
 # 못 쓰는 상태로 만들고, 그 사실은 init 할 때서야 드러난다.
 if ! aws s3api head-bucket --bucket "$TO_BUCKET" --region "$CHECK_REGION" >/dev/null 2>&1; then
   echo "🔴 중단 — 가려는 버킷이 없거나 접근할 수 없다: ${TO_BUCKET} (${CHECK_REGION})" >&2
