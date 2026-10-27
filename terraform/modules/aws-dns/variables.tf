@@ -80,3 +80,40 @@ variable "gateway_name" {
   type        = string
   default     = "aquasentinel-gw"
 }
+
+# ---------------------------------------------------------------------------
+# 훈련(DR 드릴) 전용 — 2026-10-27
+#
+# 운영 레코드(failover_hostnames)와 **헬스체크를 공유하지 않는다**. 공유하면
+# 뒤집는 순간 aquasentinel.cloud · auth. · grafana. 가 전부 같이 넘어간다.
+# DR 테스트 계획서 8.1 의 "드릴 전용 헬스체크가 #1 판정에 쓰는 헬스체크와
+# 섞이지 않아야 한다"가 이 분리를 요구한다.
+# ---------------------------------------------------------------------------
+
+variable "drill_hostnames" {
+  description = "훈련 전용 failover 레코드를 만들 서브도메인 prefix 목록(예: [\"dr-drill\"]). 빈 목록이면 아무것도 만들지 않는다 — 평상시 기본값이다."
+  type        = list(string)
+  default     = []
+
+  validation {
+    # apex("")를 넣으면 운영 apex 레코드와 같은 이름·같은 set_identifier 가 되어
+    # 서로 덮어쓴다. 훈련 호스트는 반드시 서브도메인이어야 한다.
+    condition     = !contains(var.drill_hostnames, "")
+    error_message = "drill_hostnames 에 \"\"(apex)는 넣을 수 없다 — 운영 apex 레코드와 충돌한다."
+  }
+}
+
+variable "drill_health_check_inverted" {
+  description = <<-EOT
+    🔴 훈련 스위치. true 면 드릴 전용 헬스체크의 판정을 **뒤집어** PRIMARY 를
+    "죽은 것"으로 만든다 → drill_hostnames 의 레코드만 SECONDARY(도쿄)로 넘어간다.
+
+    ALB·파드·운영 레코드는 **하나도 건드리지 않는다** — 뒤집히는 것은 이
+    헬스체크의 판정뿐이다. 전환까지 걸리는 시간은 request_interval 30초 ×
+    failure_threshold 3 = **약 90초** + ALIAS 캐시(최대 60초).
+
+    🔴 기본값은 false 다. true 로 머지하면 머지 즉시 전환이 걸린다.
+  EOT
+  type        = bool
+  default     = false
+}
