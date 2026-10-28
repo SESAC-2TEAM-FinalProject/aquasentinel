@@ -65,6 +65,8 @@ TOKYO=ap-northeast-1
 PROD_ACCOUNT=379937169195
 APPLY=false
 APPLY_OWN=false
+# 🔴 2026-10-28 추가 — 이미 있는 도쿄 전용 시크릿의 **값을 고친다**(기본은 안 덮음).
+OVERWRITE_OWN=false
 # 환경변수 쪽이 기본이다 — argv 는 ps 에 보인다(아래 --deadman-url 주석).
 DEADMAN_URL="${TOKYO_DEADMAN_URL:-}"
 # 🔴 2026-10-27 추가 — 알림 수신처를 전부 도쿄 전용으로(재희님 지시).
@@ -78,6 +80,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=true; shift ;;
     --apply-own) APPLY_OWN=true; shift ;;
+    --overwrite-own) APPLY_OWN=true; OVERWRITE_OWN=true; shift ;;
     --deadman-url)
       # 🔴 argv 는 ps 에 보인다. 아래 환경변수 쪽을 쓰는 것이 맞고, 이 플래그는
       # 남겨 두되 경고한다 — 이 스크립트는 다른 비밀값은 이미 argv 를 피하고 있다
@@ -87,7 +90,7 @@ while [[ $# -gt 0 ]]; do
       echo "  ⚠️ --deadman-url 은 ps 에 노출됩니다. TOKYO_DEADMAN_URL 환경변수를 쓰십시오:" >&2
       echo "       TOKYO_DEADMAN_URL='<주소>' $(basename "$0") --apply-own" >&2
       shift 2 ;;
-    *) echo "모르는 옵션: $1 (--apply | --apply-own · 데드맨은 TOKYO_DEADMAN_URL)" >&2; exit 2 ;;
+    *) echo "모르는 옵션: $1 (--apply | --apply-own | --overwrite-own · 수신처는 TOKYO_* 환경변수)" >&2; exit 2 ;;
   esac
 done
 
@@ -151,7 +154,8 @@ fi
 
 echo "계정 $acct · 서울 $SEOUL → 도쿄 $TOKYO"
 if $APPLY; then echo "모드: 복제 6개 실제 적용"
-elif $APPLY_OWN; then echo "모드: 도쿄 전용 3개 실제 생성"
+elif $OVERWRITE_OWN; then echo "모드: 도쿄 전용 3개 실제 생성 · 🔴 **이미 있으면 값을 덮어씁니다**"
+elif $APPLY_OWN; then echo "모드: 도쿄 전용 3개 실제 생성(이미 있으면 건너뜀)"
 else echo "모드: 계획만 (--apply | --apply-own 로 실행)"; fi
 echo
 
@@ -203,9 +207,16 @@ for row in "${TOKYO_OWN[@]}"; do
   name="${row%%|*}"; rest="${row#*|}"; src="${rest%%|*}"; note="${rest#*|}"
   printf '  %-52s ' "$name"
 
+  # 🔴 2026-10-28 — 값이 틀렸을 때 고칠 길이 없었다. 10-27 에 만든 도쿄 전용
+  # 시크릿 셋이 **서울 값 그대로** 들어갔는데(아래 stdin 버그), 이 분기가 그냥
+  # 건너뛰어서 다시 돌려도 안 고쳐졌다. --overwrite-own 을 주면 값을 덮는다.
+  exists=false
   if aws secretsmanager describe-secret --secret-id "$name" --region "$TOKYO" >/dev/null 2>&1; then
-    echo "이미 있음 — 건너뜀(값은 덮지 않습니다)"
-    continue
+    if ! $OVERWRITE_OWN; then
+      echo "이미 있음 — 건너뜀(값은 덮지 않습니다. 고치려면 --overwrite-own)"
+      continue
+    fi
+    exists=true
   fi
 
   if ! aws secretsmanager describe-secret --secret-id "$src" --region "$SEOUL" >/dev/null 2>&1; then
@@ -285,19 +296,31 @@ for row in "${TOKYO_OWN[@]}"; do
     printf '%s' "$raw_override" > "$tmp"
   fi
 
-  # 🔴 deadman 키만 도쿄 전용 주소로 바꾼다. sed 가 아니라 JSON 파서로 하는 이유 —
-  # 웹훅 URL 에 / 와 ? 가 들어 있어 구분자 충돌이 나고, 조용히 깨진 JSON 을 넣으면
-  # 오퍼레이터가 CR 전체를 거부한다(위 ⑶). 값은 출력하지 않는다.
+  # 🔴🔴 2026-10-28 — 덮어쓸 값을 **임시 파일**로 넘긴다. 전에는 파이프로
+  # stdin 에 넣었는데(`printf ... | python3 - "$tmp" <<'PYEOF'`), bash 에서는
+  # **heredoc 이 파이프를 이긴다.** python 은 heredoc 에서 *프로그램*을 읽고
+  # `sys.stdin.buffer.read()` 는 **0바이트**를 돌려준다 → 교체할 쌍이 0개 →
+  # `obj.update({})` → **아무것도 안 바뀌는데 종료코드는 0**. 그래서 10-27 16:23 에
+  # 도쿄 전용 시크릿 3개가 **서울 수신처 값 그대로** 만들어졌고, 설명에는
+  # 「도쿄 전용 키 교체」라고 찍혔다. 「키가 없습니다」 가드도 못 잡는다 —
+  # 검사할 키가 0개라서다. (bash 재현: stdin 0바이트 · 종료코드 0)
+  #
+  # sed 가 아니라 JSON 파서로 바꾸는 이유는 그대로다 — 웹훅 URL 에 / 와 ? 가 들어
+  # 있어 구분자 충돌이 나고, 조용히 깨진 JSON 을 넣으면 오퍼레이터가 CR 전체를
+  # 거부한다. 값은 argv 에도 화면에도 올리지 않는다(argv 는 ps 에 보인다).
   if (( ${#overrides[@]} > 0 )); then
-    # 🔴 sed 가 아니라 JSON 파서로 바꾼다 — 웹훅 URL 에 / 와 ? 가 들어 있어
-    # 구분자 충돌이 나고, 조용히 깨진 JSON 을 넣으면 오퍼레이터가 CR 전체를
-    # 거부한다. 값은 출력하지 않는다. 덮어쓸 값은 argv 가 아니라 **stdin** 으로
-    # 넘긴다 — argv 는 ps 에 보인다.
-    if ! printf '%s\0' "${overrides[@]}" | python3 - "$tmp" <<'PYEOF'
+    ovf=$(mktemp); chmod 600 "$ovf"
+    printf '%s\0' "${overrides[@]}" > "$ovf"
+    if ! python3 - "$tmp" "$ovf" <<'PYEOF'
 import json, sys
-path = sys.argv[1]
-# stdin 은 "키=값" 을 NUL 로 구분한 목록. 값에 = 가 들어 있어도 1회만 자른다.
-pairs = [q for q in sys.stdin.buffer.read().decode().split("\0") if q]
+path, ovpath = sys.argv[1], sys.argv[2]
+
+# "키=값" 을 NUL 로 구분한 목록. 값에 = 가 들어 있어도 1회만 자른다.
+pairs = [q for q in open(ovpath, "rb").read().decode().split("\0") if q]
+# 🔴 여기까지 왔다는 건 호출부가 바꿀 값이 있다고 판단했다는 뜻이다.
+# 0개면 전달 자체가 깨진 것이므로 **조용히 넘어가지 않는다.**
+if not pairs:
+    sys.exit("덮어쓸 값이 하나도 전달되지 않았습니다 — 전달 경로가 깨졌습니다")
 over = dict(q.split("=", 1) for q in pairs)
 
 with open(path) as f:
@@ -320,12 +343,22 @@ with open(path, "w") as f:
 PYEOF
     then
       echo "실패 — 도쿄 전용 값 교체 중 중단(위 메시지 참고)"
-      rm -f "$tmp"; tmp=""
+      rm -f "$tmp" "$ovf"; tmp=""
       continue
     fi
+    rm -f "$ovf"
   fi
 
-  if ERR=$(aws secretsmanager create-secret \
+  if $exists; then
+    if ERR=$(aws secretsmanager put-secret-value \
+        --secret-id "$name" --region "$TOKYO" \
+        --secret-string "file://$tmp" --output text 2>&1 >/dev/null); then
+      echo "값을 덮었습니다 ← $src"
+    else
+      echo "실패"; printf '      %s\n' "$ERR" | head -3
+      rm -f "$tmp"; tmp=""; continue
+    fi
+  elif ERR=$(aws secretsmanager create-secret \
       --name "$name" \
       --region "$TOKYO" \
       --description "도쿄 DR 전용 — $src 기반$( { (( ${#overrides[@]} > 0 )) || [[ -n "$raw_override" ]]; } && echo " · 도쿄 전용 값 교체")(2026-10-27)" \
@@ -335,8 +368,35 @@ PYEOF
   else
     echo "실패"
     printf '      %s\n' "$ERR" | head -3
+    rm -f "$tmp"; tmp=""; continue
   fi
   rm -f "$tmp"; tmp=""
+
+  # 🔴🔴 2026-10-28 — **되읽어 확인한다.** 위 교체가 조용히 아무것도 안
+  # 바꿔도 종료코드가 0 이던 사고가 있었다(10-27). 도쿄 전용으로 바꿨어야 할 키가
+  # 아직 서울과 같으면 여기서 잡는다. 값은 찍지 않고 같은지 다른지만 본다.
+  if (( ${#overrides[@]} > 0 )); then
+    _keys=(); for _o in "${overrides[@]}"; do _keys+=("${_o%%=*}"); done
+    _ta=$(mktemp); _sa=$(mktemp); chmod 600 "$_ta" "$_sa"
+    aws secretsmanager get-secret-value --secret-id "$name" --region "$TOKYO" \
+      --query SecretString --output text > "$_ta" 2>/dev/null
+    aws secretsmanager get-secret-value --secret-id "$src" --region "$SEOUL" \
+      --query SecretString --output text > "$_sa" 2>/dev/null
+    if python3 - "$_ta" "$_sa" "${_keys[@]}" <<'VFYEOF'
+import json, sys
+tok = json.load(open(sys.argv[1]))
+seo = json.load(open(sys.argv[2]))
+same = [k for k in sys.argv[3:] if str(tok.get(k)) == str(seo.get(k))]
+if same:
+    sys.exit("      🔴 검증 실패 — 아직 서울과 같은 키: %s" % ", ".join(sorted(same)))
+VFYEOF
+    then
+      printf '      🟢 검증 통과 — 도쿄 전용으로 바뀐 키: %s\n' "${_keys[*]}"
+    else
+      printf '      🔴 이 시크릿은 도쿄 전용 값이 반영되지 않았습니다. --overwrite-own 으로 다시 돌리십시오.\n'
+    fi
+    rm -f "$_ta" "$_sa"; unset _keys _o _ta _sa
+  fi
 done
 
 echo

@@ -115,6 +115,34 @@ printf '%s' "$A" | kubectl --context "$TOKYO" -n aquasentinel-db exec -i aquasen
 
 ---
 
+### 2.2 🔴🔴 ALTER 만으로는 안 붙습니다 — **시크릿 전파가 남아 있습니다** `[2026-10-28 실측]`
+
+`ALTER ROLE` 은 **2초**면 끝나는데, 10/28 에는 그 뒤로도 파드가 **7분 넘게** 계속
+`password authentication failed` 였습니다. 비밀번호가 파드까지 가는 길이 **두 군데**에서 막힙니다.
+
+| 막히는 곳 | 왜 |
+|---|---|
+| **ExternalSecret** | 새로고침 주기가 **1시간**입니다. PushSecret 이 Secrets Manager 에 올린 새 값을 바로 안 가져옵니다 |
+| **파드의 env** | 비밀번호를 **마운트가 아니라 env** 로 받습니다. 파드가 **뜰 때** 한 번 읽으므로, 시크릿이 바뀌어도 그 파드는 옛 값 그대로입니다 |
+
+**그래서 ALTER 바로 뒤에 이 둘을 합니다** — 자세한 명령과 실측 표는
+`DR훈련_당일진행.md` **1장 ②-1** 에 있습니다.
+
+```bash
+# ① ExternalSecret 전부 강제 새로고침
+for NS in api-module web; do
+  for E in $(kubectl --context "$TOKYO" -n $NS get externalsecret -o name); do
+    kubectl --context "$TOKYO" -n $NS annotate "$E" force-sync="$(date +%s)" --overwrite
+  done
+done
+
+# ② 갱신 시각보다 먼저 뜬 파드 중 Ready 가 아닌 것을 **이름으로** 지웁니다(3장 참고)
+```
+
+🔸 10/28 에 `api-module` 4종은 CrashLoop 재시도로 **스스로** 붙었고, `web-backend`·`alert-worker`
+처럼 **재시도 간격이 길거나 죽지 않는** 파드만 재기동이 필요했습니다.
+
+
 ## 3. 6번 — 재시작 방식 (여기서 10/26 에 사고가 났습니다)
 
 🔴 **Rollout 을 Deployment 쪽에서 재시작하면 안 됩니다.** api-module Rollout 은 Deployment 를 `workloadRef` 로 참조해서, Deployment 재시작이 **Rollout 새 판 카나리**가 됩니다. 10/26 에 `processor` 카나리가 fail-rate 로 중단돼 손으로 되돌렸습니다.

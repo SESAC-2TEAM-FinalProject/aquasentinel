@@ -1097,8 +1097,70 @@ resource "kubernetes_manifest" "aws_load_balancer_controller_app" {
         syncOptions = [
           "CreateNamespace=true",
           "ServerSideApply=true",
+          # 🔴 아래 ignoreDifferences 를 **동기화에서도** 지키게 한다.
+          # 이것이 없으면 ignoreDifferences 는 diff 표시에만 적용되고,
+          # 다른 이유로 동기화가 돌 때 Argo 가 그 필드를 다시 덮어쓴다.
+          "RespectIgnoreDifferences=true",
         ]
       }
+
+      # 🔴🔴 2026-10-28 — 차트가 만드는 **웹훅 인증서를 Argo 가 건드리지
+      # 못하게** 한다. 안 막으면 도쿄 신규 구축(훈련 1부 4단계)에서 **DB 가 아예
+      # 안 생긴다.**
+      #
+      # 무슨 일이 일어났나 (도쿄 실측)
+      #   이 차트는 `genCA`/`genSignedCert` 로 **렌더마다 새 자가서명 CA** 를 만든다.
+      #   Argo 는 그 CA 를 두 곳에 쓴다 — Secret `aws-load-balancer-tls`(파드가
+      #   내줄 인증서)와 웹훅 설정의 `caBundle`(API 서버가 검증할 CA).
+      #   🔴 그런데 Argo 는 **Secret 값을 가려서 diff** 하므로 Secret 은 늘
+      #   `Synced` 로 보고 다시 쓰지 않고, 웹훅 설정은 reconcile 마다 **새 렌더의
+      #   CA 로 다시 쓴다.** 그래서 둘이 영구히 어긋난다.
+      #
+      #   09:28:28Z  Argo 첫 동기화 — Secret·웹훅 둘 다 렌더 R1 (일치)
+      #   09:31:57Z  Secret 만 렌더 R2 로 교체        → 여기서 어긋남
+      #   09:35:21Z  웹훅 caBundle 만 렌더 R3 로 교체
+      #   10:17:28Z  내가 caBundle 을 Secret 에 맞춰 패치 → **3초 뒤 Argo 가 되돌림**
+      #
+      # 증상 — 이게 왜 DB 를 막나
+      #   `mservice.elbv2.k8s.aws` 는 **모든 Service 생성**을 거치는 mutating
+      #   웹훅이고 `failurePolicy: Fail` 이다. CA 가 어긋나면
+      #     Internal error occurred: failed calling webhook "mservice.elbv2.k8s.aws":
+      #     tls: failed to verify certificate: x509: certificate signed by unknown authority
+      #   가 되어 **클러스터의 모든 Service 생성이 거부**된다. CNPG 는
+      #   `aquasentinel-pg-rw` Service 를 못 만들어 클러스터가
+      #   `Unable to create required cluster objects` 에서 멈추고 **파드가 0개**다.
+      #   → 5단계 승격 · 7단계 비밀번호 · 2부 전체가 전부 불가능해진다.
+      #
+      # 🔸 간헐적이다 — 같은 날 리허설에서는 안 터졌고(DB 정상 생성),
+      #    서울은 두 값이 **같은 시각 1회**로 써져 일치한다(03:15:58Z 실측).
+      #    🔴 서울도 같은 코드라 잠재 위험은 있으나 **지금 일치하고 판정 창
+      #    안이라 건드리지 않는다** — 창이 끝난 뒤 같은 수정을 서울에도 넣는다.
+      #
+      # 고치는 법: 생성 때 한 번 쓰고 **그 뒤로 Argo 가 두 값을 모두 안 건드리게**
+      # 한다. 그러면 첫 렌더에서 맞은 짝이 그대로 유지된다.
+      ignoreDifferences = [
+        {
+          group             = "admissionregistration.k8s.io"
+          kind              = "MutatingWebhookConfiguration"
+          name              = "aws-load-balancer-webhook"
+          namespace         = ""
+          jqPathExpressions = [".webhooks[].clientConfig.caBundle"]
+        },
+        {
+          group             = "admissionregistration.k8s.io"
+          kind              = "ValidatingWebhookConfiguration"
+          name              = "aws-load-balancer-webhook"
+          namespace         = ""
+          jqPathExpressions = [".webhooks[].clientConfig.caBundle"]
+        },
+        {
+          group             = ""
+          kind              = "Secret"
+          name              = "aws-load-balancer-tls"
+          namespace         = "kube-system"
+          jqPathExpressions = [".data"]
+        },
+      ]
     }
   }
 
