@@ -100,10 +100,10 @@ mkdir -p "$DRILL_DIR" && cd "$DRILL_DIR" && echo "$DRILL_DIR"
 | 1 | `tokyo/persistent` 확인 | 0.3 (상시 운영) | 0분 | S3 3 · ACM 1 | ✅ |
 | 2 | `1-network` apply | 아래 **①-가** | **4분** `[사실]` · 🔸 리허설 **2분 5초** | VPC·서브넷 · `0 to destroy` | ⟨ ⟩ |
 | 3 | `2-cluster` apply · 🔴 **409 함정** | 아래 **①-가** | **19분** `[사실]` · 🔸 리허설 **19분 29초**(함정 대응 포함) | EKS Active · 노드 **3/3** · Redis available | ⟨ ⟩ |
-| **4** | 🔴 **`3-gitops` apply — 1순위 측정 · 🔴 `plan` 불가** | 아래 **①-나** · 막히면 `WAL아카이빙` | 🔸 리허설 **16분 42초**(Terraform 4:46 + Argo 수렴 11분) · 상한 48분 | 🔴 Argo **39/40**(`keycloak` 만 Degraded = standby 정상) · CNPG **3/3** | ⟨ ⟩ |
+| **4** | 🔴 **`3-gitops` apply — 1순위 측정 · 🔴 `plan` 불가** | 아래 **①-나** · 막히면 `WAL아카이빙` | 🔸 리허설 **16분 42초**(Terraform 4:46 + Argo 수렴 11분) · 상한 48분 | 🔴 **LBC CA 일치 확인**(아래 ①-나 함정) · 🔴 Argo **39/40**(`keycloak` 만 Degraded = standby 정상) · CNPG **3/3** | ⟨ ⟩ |
 | **5** | 🔴 **① CNPG 승격** — **못 되돌림 · 사람 판단** | 🔴 **부록 A** | 🔸 리허설 **1분 27초**(`f` 전환은 **28초**) | `pg_is_in_recovery()` = **f** · `transaction_read_only=off` | ⟨ ⟩ |
 | 6 | **②③ 깨우기** · 🔴🔴 **플래그 2개** | 아래 ② | 🔸 리허설 Terraform 18초 + Keycloak 기동 **약 2분** + 가공·판정 깨어남 **72초** | Keycloak `instances:1`·파드 Ready · 🔴 **Rollout 4개 `replicas>0` · ScaledObject 4개**(🟢 10/28 수정 후 72초에 자동 — 아래 ②) · 🔴 수집기는 멈춘 채 | ⟨ ⟩ |
-| 7 | 🔴 **④ 비밀번호 맞추기** | **`DB다시부트스트랩`** | 🔸 리허설 **7분 44초** | 파드 Ready · `/readyz` 200 · PG 로그 `password authentication failed` **0** | ⟨ ⟩ |
+| 7 | 🔴 **④ 비밀번호 맞추기** | **`DB다시부트스트랩`** + 🔴 **아래 ②-1** | 🔸 리허설 7분 44초 · 🔴 **10/28 실측 15분 31초** — 16분으로 잡기 | 파드 Ready · `/readyz` 200 · PG 로그 `password authentication failed` **0** | ⟨ ⟩ |
 | 8 | 🔴 **⑤ `4-edge` apply** | `드릴레코드_전환` · 아래 ③ | 🔸 리허설 **35초**(도쿄 쪽만) | `dr-drill.` **SECONDARY 1줄** · 🔴 운영 도메인 SECONDARY **0** | ⟨ ⟩ |
 | 9 | **Stage 0 RPO** — 복구 가능 시점 | CNPG 복구 로그 · 🔸 아래 ⑤ | 3분 | 🔴 분해능 = `archive_timeout` **5분** · 🔸 리허설 참고값 **약 12분** | ⟨ ⟩ |
 | 10 | **데이터 공백** | `collector-completeness` 대조 | 5분 | 공백 구간 기록 | ⟨ ⟩ |
@@ -214,6 +214,53 @@ done
 
 → **`39/40` + `keycloak` 만 Degraded + CNPG `3/3` 이면 4단계 끝입니다.** `40/40` 은 **6단계 깨우기 뒤**에 됩니다. 🔸 이걸 모르면 있지도 않은 문제를 상한 48분까지 기다립니다.
 
+---
+
+🔴🔴 **함정 — LBC 웹훅 CA 가 어긋나면 CNPG 가 **아예 안 생깁니다** `[2026-10-28 실측 · 코드로 고침]`
+
+증상이 DB 와 아무 상관 없어 보입니다:
+
+| 보이는 것 | 실제 |
+|---|---|
+| `aquasentinel-pg` 가 `Unable to create required cluster objects` | **Service 를 못 만든 것**입니다 |
+| `aquasentinel-db` 에 **파드 0개 · PVC 0개** | 복원이 **시작조차** 안 됐습니다 |
+| `keycloak`·`web-backend`·`api-module-db-secret` Degraded | DB 가 없어서입니다 |
+
+`phaseReason` 에 범인이 그대로 적혀 있습니다:
+
+```
+Internal error occurred: failed calling webhook "mservice.elbv2.k8s.aws":
+tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+`mservice.elbv2.k8s.aws` 는 **모든 Service 생성**을 거치는 mutating 웹훅이고 `failurePolicy: Fail` 입니다. 차트가 렌더마다 새 자가서명 CA 를 만드는데, Argo 는 **웹훅 설정은 reconcile 마다 다시 쓰고 Secret 은 안 다시 씁니다**(Secret 값을 가려서 diff 하므로 늘 `Synced` 로 봅니다). 둘이 어긋나면 **클러스터의 모든 Service 생성이 거부**됩니다.
+
+🟢 `applications.tf` 의 `ignoreDifferences` + `RespectIgnoreDifferences=true` 로 고쳤습니다. 그래도 **4단계에서 한 번 확인**하십시오 — 30초면 됩니다:
+
+```bash
+MB=$(kubectl --context "$TOKYO" get mutatingwebhookconfiguration aws-load-balancer-webhook \
+      -o jsonpath='{.webhooks[0].clientConfig.caBundle}')
+SB=$(kubectl --context "$TOKYO" -n kube-system get secret aws-load-balancer-tls \
+      -o jsonpath='{.data.ca\.crt}')
+[ "$MB" = "$SB" ] && echo "🟢 CA 일치" || echo "🔴 CA 불일치 — 아래 대처"
+```
+
+🔴 **어긋났을 때** — `caBundle` 을 Secret 에 맞춥니다. 🔸 수정이 들어가 있으면 Argo 가 **안 되돌립니다**(수정 전에는 3초 만에 되돌렸습니다):
+
+```bash
+CA=$(kubectl --context "$TOKYO" -n kube-system get secret aws-load-balancer-tls \
+      -o jsonpath='{.data.ca\.crt}')
+for K in mutatingwebhookconfiguration validatingwebhookconfiguration; do
+  N=$(kubectl --context "$TOKYO" get $K aws-load-balancer-webhook \
+        -o jsonpath='{.webhooks}' | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')
+  P=$(python3 -c "import json,sys;print(json.dumps([{'op':'replace','path':'/webhooks/%d/clientConfig/caBundle'%i,'value':sys.argv[1]} for i in range(int(sys.argv[2]))]))" "$CA" "$N")
+  kubectl --context "$TOKYO" patch $K aws-load-balancer-webhook --type=json -p "$P"
+done
+```
+
+🔸 **2분 안에 CNPG 가 저절로 풀립니다.** 10/28 실측 — 패치 `19:25:07` → `aquasentinel-db` Service **3개** `19:26:59` → `Cluster in healthy state` **3/3** `19:33:28`. **복원 전체 8분 21초.**
+
+
 ### ② ②③ 깨우기 (6단계)
 
 🔴🔴 **`-var promote_tokyo_db=true` 를 반드시 같이 줍니다. 빠뜨리면 5단계 승격이 풀립니다.**
@@ -318,6 +365,79 @@ kubectl --context "$TOKYO" -n api-module get scaledobject    # 🔴 0개면 안 
 🔸 **왜 중요한가** — 계획서가 정한 DR 복구 완료의 기준이 *「해양 데이터가 다시 신선해지는 것」* 이고 그걸 되살리는 주체가 이 4개 워크로드입니다. 안 깨어나면 **전환이 완료되지 않습니다.**
 
 🔸 **수집기는 그대로 멈춰 있어야 정상입니다** — `suspend_collectors` 는 `dr_mode` 와 **다른 축**(`apps-kustomize.tf:45`)이라 `dr_mode=active` 여도 `collector-*` 6개는 `suspend=true` 를 유지합니다 `[10/28 실측 · terraform show -json 으로 확인]`. `dr_mode=active` 가 빼는 suspend 는 `evaluation-sweep`·`interpolation-error` 둘뿐이고, 이들은 공공 API 를 호출하지 않습니다.
+
+### ②-1 🔴 7단계 뒤 — **시크릿이 파드까지 닿아야 끝납니다** `[2026-10-28 실측]`
+
+`DB다시부트스트랩` 의 `ALTER ROLE` 은 **2초**면 끝나지만 그것만으로는 파드가 안 붙습니다. 비밀번호가 **네 단계**를 거칩니다:
+
+```
+CNPG Secret        aquasentinel-db/aquasentinel-pg-app
+   │  PushSecret      → 도쿄 Secrets Manager 로 밀어 올림
+   ▼
+Secrets Manager    aquasentinel-dr-tokyo-api-module-database-*
+   │  ExternalSecret  🔴 새로고침 주기 **1시간**
+   ▼
+K8s Secret         api-module/api-module-database · web/aquasentinel-pg-app
+   │  env            🔴 파드가 **뜰 때** 읽습니다(마운트가 아닙니다)
+   ▼
+파드
+```
+
+🔴 **두 군데서 막힙니다**
+
+1. ExternalSecret 이 **1시간 주기**라 PushSecret 이 올린 새 값을 바로 안 가져옵니다
+2. 그 갱신 **시각보다 먼저 뜬 파드**는 옛 비밀번호를 **env** 로 들고 있어 자동으로 안 바뀝니다
+
+**그래서 `ALTER ROLE` 뒤에 이 둘을 합니다**:
+
+```bash
+# ① ExternalSecret 전부 강제 새로고침
+for NS in api-module web; do
+  for E in $(kubectl --context "$TOKYO" -n $NS get externalsecret -o name); do
+    kubectl --context "$TOKYO" -n $NS annotate "$E" force-sync="$(date +%s)" --overwrite
+  done
+done
+
+# ② 갱신 시각보다 먼저 뜬 파드를 찾습니다 — 이 중 Ready 가 아닌 것을 이름으로 지웁니다
+T=$(kubectl --context "$TOKYO" -n api-module get externalsecret api-module-database \
+      -o jsonpath='{.status.refreshTime}')
+echo "갱신 시각: $T"
+kubectl --context "$TOKYO" get pods -A --no-headers \
+  -o custom-columns='NS:.metadata.namespace,N:.metadata.name,S:.status.startTime' \
+  | awk -v t="$T" '$3 < t' | grep -E 'api-module|web|keycloak'
+```
+
+🔸 **누가 실패하는지 1초에 찾는 법** — PG 로그의 출처 IP 를 파드로 되돌립니다:
+
+```bash
+kubectl --context "$TOKYO" -n aquasentinel-db logs aquasentinel-pg-1 -c postgres --since=90s \
+  | grep 'password authentication failed' \
+  | python3 -c 'import sys,json;from collections import Counter;c=Counter()
+for l in sys.stdin:
+    try: r=json.loads(l)["record"]
+    except Exception: continue
+    c[r.get("connection_from","").split(":")[0]]+=1
+[print(k,v) for k,v in c.most_common()]' \
+  | while read IP N; do
+      echo "  $IP ${N}건 → $(kubectl --context "$TOKYO" get pods -A -o wide --no-headers | awk -v i=$IP '$7==i{print $1"/"$2; exit}')"
+    done
+```
+
+**10/28 실측 (KST)**
+
+| 시각 | 무엇 | 소요 |
+|---|---|---|
+| 20:04:12 | `ALTER ROLE app PASSWORD` | **2초** |
+| 20:10:47 | ExternalSecret 강제 새로고침 · 비밀번호 일치 확인 | 4초 |
+| ~20:11 | 🔸 `api-module` 4종은 CrashLoop 재시도로 **스스로** 붙음(재기동 불필요) | — |
+| 20:17:25 | `web-backend` 2개 재기동 → **2/2** · Argo **40/40** | 34초 |
+| 20:18:54 | 남은 옛 파드(`alert-worker` · `raw-coverage`) 정리 → **비정상 0** | 49초 |
+| | **7단계 전체** | **15분 31초** |
+
+🔴 리허설 **7분 44초**보다 두 배 깁니다 — 위 두 함정 때문입니다. **당일 예상은 16분으로 잡으십시오.**
+
+🟢 **7단계 완료 기준(= 1부 완료 기준)**: Argo **40/40** · 비정상 파드 **0** · PG `password authentication failed` **0** · `/readyz` **200**. 10/28 에 네 가지 모두 확인했고, 같은 시각 서울은 **41/41 · 비정상 0** 으로 영향 없었습니다.
+
 
 ### ③ ⑤ 드릴 레코드 (8단계 — 도쿄 SECONDARY 만듦)
 
