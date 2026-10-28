@@ -110,7 +110,7 @@ mkdir -p "$DRILL_DIR" && cd "$DRILL_DIR" && echo "$DRILL_DIR"
 | 11 | 측정값 수집 | 4장 | 10분 | 단계별 시각 · 증거 파일 | ⟨ ⟩ |
 | 11-1 | DNS 가 넘어갔나 | `dig dr-drill.aquasentinel.cloud` | 2분 | 응답이 **도쿄 ALB** | ⟨ ⟩ |
 | 11-2 | 🔴 데드맨 `new → up` | Healthchecks.io 화면 | 2분 | **C(계정) · A(확인)** | ⟨ ⟩ |
-| 11-3 | 🔴 **화면 눈으로** | 브라우저 | 5분 | **B** — `dr-drill.` 로그인 → 대시보드 본문까지 | ⟨ ⟩ |
+| 11-3 | 🔴 **화면 눈으로** | 브라우저 | 5분 | **B** — `dr-drill.` 로그인 → 대시보드 본문까지 · 🔸 **프라이빗 창 권장**(아래 상자) | ⟨ ⟩ |
 | 12 | 🔴 **뒷정리** — 🔴 **함정 2건** | 3장 | **34분** `[사실]` · 🔸 리허설 **49분**(함정 대응 포함) | 과금 자원 **0** · 🔴 **3장 3.1·3.2 까지** | ⟨ ⟩ |
 
 ### ①-가 Terraform apply — **2·3단계만** (`1-network` · `2-cluster`)
@@ -468,6 +468,24 @@ aws route53 list-resource-record-sets --hosted-zone-id Z04047191I2SWBLU7U7D \
   --query 'ResourceRecordSets[?Failover==`SECONDARY`].[Name,Type]' --output text
 # 🔴 dr-drill.aquasentinel.cloud. A  한 줄만 나와야 합니다
 ```
+
+🔸 **11-3 보충 — 로그인은 되고, 로그아웃만 막힙니다** `[2026-10-28 실측]`
+
+서울 Keycloak 에 **드릴 주소가 제대로 등록돼 있습니다.** 도쿄를 띄워 놓고 직접 물어본 결과:
+
+| 물어본 것 | 서울 Keycloak 응답 |
+|---|---|
+| `https://dr-drill.aquasentinel.cloud/auth/callback` | **200 · 로그인 화면** 🟢 |
+| 운영 apex `/auth/callback` (대조군) | 200 🟢 |
+| 등록 안 된 가짜 주소 (대조군) | 400 🔴 |
+| 🔸 **로그아웃** `post_logout_redirect_uri=https://dr-drill.…/` | **400** — 등록 목록에 없습니다 |
+
+🔸 도쿄 프론트 번들이 쓰는 콜백 경로도 **`/auth/callback`** 으로 등록값과 같습니다. 그래서 **11-3(로그인 → 대시보드)은 막히지 않습니다.**
+
+🔴 다만 **드릴 주소에서 로그아웃하면 400** 이고, Keycloak 은 주소 검증을 세션 종료보다 먼저 해서 **SSO 세션이 안 끊깁니다**(운영 도메인은 10/27 `7763a2f` 로 고쳐졌지만 드릴 주소에는 안 넣었습니다). 🔸 **B 는 프라이빗 창으로 열고 로그아웃 대신 창을 닫으십시오.** 고치려면 서울 `3-gitops` 에 `redirectUris` 한 줄을 더해야 하는데 **창 안 운영 변경**이라 훈련용으로는 권하지 않습니다.
+
+---
+
 
 ### ④ 🔴 RTO 끝 재기 — **7단계 직후부터** 30초 간격
 
