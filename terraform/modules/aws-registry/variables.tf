@@ -20,6 +20,20 @@ variable "repository_names" {
     egress-proxy는 2026-10-15 재희님 요청(결정 4, egress 프록시 반영)에 따라
     추가 — 팀이 직접 빌드하는 이미지가 아니라 Docker Hub 공식 squid 이미지를
     그대로 미러링해 둔다(IMMUTABLE 레포라 태그 덮어쓰기 없이 버전 고정).
+
+    web-backend는 2026-10-28에 추가 — 쿠버네티스 객체 이름이 2026-10-26에
+    status-svc → web-backend로 바뀌었는데 ECR 리포지토리 이름만 옛 이름으로
+    남아 있었다. 이름을 맞추는 작업이고, 순서는 "추가 → 전환 → 정리"다:
+
+      이 단계 : web-backend 리포지토리를 만든다(status-svc는 그대로 둔다)
+      다음    : 웹 CI가 두 리포지토리에 같은 태그를 올린다 → gitops image를
+                web-backend로 바꾼다 → 웹 CI에서 옛 리포지토리를 뺀다
+      마지막  : status-svc 리포지토리를 이 목록에서 뺀다
+
+    status-svc를 여기서 바로 바꾸지 않는 이유는 IMMUTABLE 리포지토리라
+    이름 변경이 곧 "새로 만들고 지우기"이기 때문이다. 한 번에 바꾸면 그 사이
+    운영이 가리키는 이미지가 사라져 ImagePullBackOff가 된다. 되돌릴 길을
+    열어 두려고 옛 리포지토리를 판정 창이 끝날 때까지 남긴다.
   EOT
   type        = list(string)
   default = [
@@ -29,6 +43,7 @@ variable "repository_names" {
     "api-module/grading",
     "api-module/evaluation",
     "web-frontend",
+    "web-backend",
     "status-svc",
     "ocean-batch",
     "egress-proxy",
