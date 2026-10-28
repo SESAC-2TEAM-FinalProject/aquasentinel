@@ -47,7 +47,19 @@ module "cicd" {
   build_projects = {
     web = {
       gitlab_project_id = var.web_gitlab_project_id
-      ecr_repositories  = ["aquasentinel-dev/status-svc", "aquasentinel-dev/web-frontend"]
+
+      # web-backend 는 2026-10-28 에 추가 — 쿠버네티스 객체 이름이 10-26 에
+      # status-svc -> web-backend 로 바뀌었는데 ECR 리포지토리 이름만 옛
+      # 이름이었다(modules/aws-registry/variables.tf 참고).
+      #
+      # 🔴 두 리포지토리를 당분간 같이 둔다. 웹 CI 가 같은 태그를 양쪽에 올리는
+      # 구간이 있어야 gitops image 를 바꿀 때 되돌릴 길이 남는다. 여기서
+      # status-svc 를 먼저 빼면 그 순간 웹 CI push 가 AccessDenied 로 막힌다.
+      ecr_repositories = [
+        "aquasentinel-dev/status-svc",
+        "aquasentinel-dev/web-backend",
+        "aquasentinel-dev/web-frontend",
+      ]
     }
     api_module = {
       gitlab_project_id = var.api_module_gitlab_project_id
