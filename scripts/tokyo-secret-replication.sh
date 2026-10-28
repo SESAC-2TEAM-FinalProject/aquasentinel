@@ -388,12 +388,12 @@ tok = json.load(open(sys.argv[1]))
 seo = json.load(open(sys.argv[2]))
 same = [k for k in sys.argv[3:] if str(tok.get(k)) == str(seo.get(k))]
 if same:
-    sys.exit("      \U0001f534 검증 실패 — 아직 서울과 같은 키: %s" % ", ".join(sorted(same)))
+    sys.exit("      🔴 검증 실패 — 아직 서울과 같은 키: %s" % ", ".join(sorted(same)))
 VFYEOF
     then
-      printf '      \U0001f7e2 검증 통과 — 도쿄 전용으로 바뀐 키: %s\n' "${_keys[*]}"
+      printf '      🟢 검증 통과 — 도쿄 전용으로 바뀐 키: %s\n' "${_keys[*]}"
     else
-      printf '      \U0001f534 이 시크릿은 도쿄 전용 값이 반영되지 않았습니다. --overwrite-own 으로 다시 돌리십시오.\n'
+      printf '      🔴 이 시크릿은 도쿄 전용 값이 반영되지 않았습니다. --overwrite-own 으로 다시 돌리십시오.\n'
     fi
     rm -f "$_ta" "$_sa"; unset _keys _o _ta _sa
   fi
