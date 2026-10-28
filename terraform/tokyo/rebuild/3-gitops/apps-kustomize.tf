@@ -74,29 +74,37 @@ locals {
   #     파드를 1개 남기는 알려진 문제가 따로 있다(Argo Rollouts 의 revision==1
   #     게이트 한계). 여기서 Deployment 까지 0 으로 패치하면 Rollouts 컨트롤러와
   #     Argo CD selfHeal 이 서로 되돌리는 싸움이 될 수 있어 건드리지 않는다.
-  # 🔴🔴 2026-10-28 리허설 — **이 묶음을 비우는 것만으로는 깨어나지 않는다**(미해결)
+  # 🟢 2026-10-28 해결 — 원인은 **「패치 키가 사라지는 것」**이었다(아래 app_kustomize)
   #
-  # dr_mode=active 로 apply 하면 root Application 의 live 값은 올바르게 바뀐다
-  # (해당 앱 패치가 {images} 만 남음). git 에도 그 패치는 없다. 그런데 **자식**
-  # Application(api-module-evaluation 등)이 standby 패치 3건을 그대로 들고
-  # `Synced`/`Healthy` 로 판정된다 — Argo 가 「지워야 할 필드」로 보지 않는다.
-  # 결과로 Rollout 4개가 replicas=0 이고 ScaledObject 가 0개로 남는다.
+  # 증상: dr_mode=active 로 apply 하면 root Application 의 live 값은 올바르게
+  # 바뀌는데(해당 앱 패치가 {images} 만 남음) **자식** Application
+  # (api-module-evaluation 등)이 standby 패치 3건을 그대로 들고 `Synced`/`Healthy`
+  # 로 판정된다. 결과로 Rollout 4개가 replicas=0 · ScaledObject 0개로 남아 **DR
+  # 전환이 완료되지 않는다**(훈련 1부 6단계). 우회 3종 전부 실패: 대기 7분 ·
+  # `argocd.argoproj.io/refresh=hard` · application-controller 재시작 5분.
   #
-  # 우회 3종 전부 실패: 대기 7분 · `argocd.argoproj.io/refresh=hard` ·
-  # argocd-application-controller 재시작 5분.
+  # 원인: active 모드에서 `patches` **키 자체가 없어졌다.** 키가 없으면 Argo 가
+  # 만드는 자식 매니페스트에 그 필드가 아예 안 들어가고, Argo 의 diff 는 그것을
+  # 「지워야 할 필드」로 보지 않는다 — live 에 남은 옛 patches 를 그대로 둔 채
+  # `Synced` 로 판정한다(`argocd app diff root` 가 **0줄 · exit 0** 실측).
   #
-  # 🔸 keycloak·web 은 정상 깨어난다 — 그 둘은 applications.tf 의 patched_app 이
-  #    **자식 Application 을 직접** 관리하고, api-module 은 root 의 kustomize 를
-  #    거친다. 깨지는 쪽은 **거쳐 가는 쪽**이다.
+  # 수정: active 에서도 키를 남긴다 — `patches = []`. `[3건] → []` 라는 **값의
+  # 변화**가 되어 diff 에 잡힌다. 아래 app_kustomize 참고.
   #
-  # 🔴 고치는 방향(둘 중 하나, 아직 결정 전 — 도쿄를 띄워야 검증된다)
-  #   ㉠ api-module 가공·판정 앱도 patched_app 으로 옮겨 자식을 직접 관리한다
-  #      (keycloak·web 과 같은, 이미 작동이 확인된 패턴)
-  #   ㉡ 「패치를 빼서 깨운다」를 「값을 뒤집어서 깨운다」로 바꾼다
-  #      (replicas 를 0↔실제값으로, ScaledObject 는 $patch: delete 를 넣고 뺌)
-  #      — 빠진 패치는 Argo 에게 의도를 남기지 않는다는 것이 이번 교훈이다
+  # 실측(같은 날 도쿄 재구축 클러스터 · 막힌 Argo 작업 없는 상태)
+  #   10:01:13Z  terraform apply -var dr_mode=active  → 0 added, 4 changed
+  #   10:02:07Z  자식 patches 3건 → 0건
+  #   10:02:25Z  Rollout replicas 복원(evaluation 1 · grading 2 · interpolation 2 ·
+  #              processor 2 = 서울과 동일) · ScaledObject 4개 Ready=True
+  #   ⇒ 손 작업 없이 **72초.** 공공 API 수집기 6개는 suspend=true 로 남았다(의도).
   #
-  # 당일 대처는 런북 DR훈련_당일진행.md 1장 ② 의 「당일 대처」 명령.
+  # 🔴 같이 배운 것 — Argo 는 `status.operationState.phase=Running` 인 동안 새
+  # 동기화를 **시작하지 않는다.** 내가 `argocd app sync root --force` 로 만든 멈춘
+  # 작업 하나가 16분간 모든 전파를 막아 이 수정이 「실패」로 보였다. 당일 무엇도
+  # 판정하기 전에 root 의 op phase 를 먼저 본다(런북 1장 ② 의 사전 점검).
+  # 리허설 때의 op phase 는 기록하지 않아 그때도 멈춘 작업이 있었는지는 확인할 수
+  # 없다. 다만 「키 삭제는 diff 가 아니다」는 위 diff 0줄로 따로 확인됐으므로 이
+  # 수정은 어느 쪽이든 필요하다.
   app_patches_dr_standby = local.dr_standby ? {
     # Rollout 이 없는 평범한 Deployment — 매니페스트에 replicas: 1 이 있어 replace.
     "api-module-completeness-check" = [
@@ -241,7 +249,20 @@ locals {
     for app in distinct(concat(keys(local.ecr_images_apps), keys(local.app_patches))) :
     app => merge(
       contains(keys(local.ecr_images_apps), app) ? { images = local.ecr_images_apps[app] } : {},
-      contains(keys(local.app_patches), app) ? { patches = local.app_patches[app] } : {},
+      # 🔴 2026-10-28 — 패치가 0개여도 **키를 남긴다**(`patches = []`).
+      #
+      # 전에는 `contains(...) ? {patches=...} : {}` 라 `dr_mode=active` 때 그
+      # 앱에서 **patches 키 자체가 사라졌다.** 그런데 Argo 의 diff 가 「키 삭제」를
+      # 차이로 잡지 않아, 자식 Application 에 옛 패치가 남은 채 `Synced` 로
+      # 판정됐다(10/28 도쿄 실측 — `argocd app diff root` 가 **0줄 · exit 0**,
+      # `last-applied-configuration` 은 옛 patches 그대로 = 한 번도 안 밀었다).
+      # 결과로 Rollout 4개가 replicas=0 · ScaledObject 0개로 남아 **DR 전환이
+      # 완료되지 않았다**(훈련 1부 6단계).
+      #
+      # 키를 남기면 `patches: [3건] → patches: []` 라는 **값의 변화**가 되어 diff 에
+      # 잡힌다 — 같은 날 도쿄에서 실측 확인했다(10:01:13Z apply → 10:02:25Z 깨어남,
+      # 손 작업 없이 72초). 자세한 경위는 위 app_patches_dr_standby 주석.
+      { patches = contains(keys(local.app_patches), app) ? local.app_patches[app] : [] },
     )
   }
 }

@@ -102,7 +102,7 @@ mkdir -p "$DRILL_DIR" && cd "$DRILL_DIR" && echo "$DRILL_DIR"
 | 3 | `2-cluster` apply · 🔴 **409 함정** | 아래 **①-가** | **19분** `[사실]` · 🔸 리허설 **19분 29초**(함정 대응 포함) | EKS Active · 노드 **3/3** · Redis available | ⟨ ⟩ |
 | **4** | 🔴 **`3-gitops` apply — 1순위 측정 · 🔴 `plan` 불가** | 아래 **①-나** · 막히면 `WAL아카이빙` | 🔸 리허설 **16분 42초**(Terraform 4:46 + Argo 수렴 11분) · 상한 48분 | 🔴 Argo **39/40**(`keycloak` 만 Degraded = standby 정상) · CNPG **3/3** | ⟨ ⟩ |
 | **5** | 🔴 **① CNPG 승격** — **못 되돌림 · 사람 판단** | 🔴 **부록 A** | 🔸 리허설 **1분 27초**(`f` 전환은 **28초**) | `pg_is_in_recovery()` = **f** · `transaction_read_only=off` | ⟨ ⟩ |
-| 6 | **②③ 깨우기** · 🔴🔴 **플래그 2개** | 아래 ② | 🔸 리허설 Terraform 18초 + Keycloak 기동 **약 2분** | Keycloak `instances:1`·파드 Ready · 🔴 **Rollout 4개 `replicas>0` · ScaledObject 4개**(아래 ② 함정) · 🔴 수집기는 멈춘 채 | ⟨ ⟩ |
+| 6 | **②③ 깨우기** · 🔴🔴 **플래그 2개** | 아래 ② | 🔸 리허설 Terraform 18초 + Keycloak 기동 **약 2분** + 가공·판정 깨어남 **72초** | Keycloak `instances:1`·파드 Ready · 🔴 **Rollout 4개 `replicas>0` · ScaledObject 4개**(🟢 10/28 수정 후 72초에 자동 — 아래 ②) · 🔴 수집기는 멈춘 채 | ⟨ ⟩ |
 | 7 | 🔴 **④ 비밀번호 맞추기** | **`DB다시부트스트랩`** | 🔸 리허설 **7분 44초** | 파드 Ready · `/readyz` 200 · PG 로그 `password authentication failed` **0** | ⟨ ⟩ |
 | 8 | 🔴 **⑤ `4-edge` apply** | `드릴레코드_전환` · 아래 ③ | 🔸 리허설 **35초**(도쿄 쪽만) | `dr-drill.` **SECONDARY 1줄** · 🔴 운영 도메인 SECONDARY **0** | ⟨ ⟩ |
 | 9 | **Stage 0 RPO** — 복구 가능 시점 | CNPG 복구 로그 · 🔸 아래 ⑤ | 3분 | 🔴 분해능 = `archive_timeout` **5분** · 🔸 리허설 참고값 **약 12분** | ⟨ ⟩ |
@@ -254,29 +254,41 @@ Plan: 0 to add, 5 to change, 0 to destroy
 
 ---
 
-🔴🔴 **함정 — `dr_mode=active` 가 api-module 가공·판정을 못 깨웁니다** `[2026-10-28 리허설 실측 · 미해결]`
+🟢 **고쳤습니다 — `dr_mode=active` 가 api-module 가공·판정을 못 깨우던 문제** `[2026-10-28]`
 
-apply 는 `exit 0` 이고 Argo 는 `Synced/Healthy` 인데, **실제로는 안 깨어납니다.**
+리허설에서 apply 는 `exit 0`, Argo 는 `Synced/Healthy` 인데 **실제로는 안 깨어났습니다.** 원인은 `apps-kustomize.tf` 가 active 모드에서 `patches` **키 자체를 없애던 것**이고, Argo 의 diff 는 「키 삭제」를 차이로 보지 않습니다(`argocd app diff root` 가 **0줄 · exit 0**). 지금은 active 에서도 `patches = []` 를 남겨 **값의 변화**로 만듭니다.
 
-| 층 | 10/28 실측 |
+| | 2026-10-28 실측 (도쿄 재구축 클러스터) |
 |---|---|
-| Terraform → `root` Application **live** | 🟢 올바름 — `api-module-evaluation` 패치가 `{images: […]}` 뿐(standby 패치 제거됨) |
-| git 의 `apps/api-module-evaluation/application.yaml` | 🟢 그 패치 **애초에 없음** |
-| **자식** Application `api-module-evaluation` live | 🔴 **standby 패치 3건 그대로** — `replicas:0` · ScaledObject `$patch: delete` · `evaluation-sweep suspend:true` |
-| 자식 상태 | 🔴 `Synced` / `Healthy` ← **다른데도 같다고 봅니다** |
-| 결과 | Rollout `evaluation`·`grading`·`interpolation`·`processor` 전부 **`replicas=0`** · ScaledObject **0개** (서울은 1/2/2/2) |
+| 적용 | `10:01:13Z` `terraform apply -var dr_mode=active` → `0 added, 4 changed` |
+| 자식 패치 | `10:02:07Z` 3건 → **0건** |
+| 깨어남 | `10:02:25Z` Rollout `1·2·2·2`(= 서울) · ScaledObject **4개 Ready=True** |
+| 걸린 시간 | **72초** · 🟢 **손 작업 없음** |
+| 수집기 | `collector-*` 6개 `suspend=true` 유지 🟢 |
 
-🔸 **`keycloak`·`web` 은 정상 깨어납니다** — 그 둘은 Terraform 이 `patched_app` 으로 **자식 Application 을 직접** 관리하고, api-module 은 `root` 의 kustomize 를 거칩니다. 깨지는 건 **거쳐 가는 쪽**입니다.
+🔸 그래서 6단계는 **위 apply 한 줄**이면 끝납니다. 아래 두 상자는 **그래도 안 될 때만** 봅니다.
 
-**해 본 우회 — 전부 실패했습니다**
+---
 
-| 시도 | 결과 |
-|---|---|
-| 그냥 대기 7분 | 🔴 패치 3건 그대로 |
-| `kubectl annotate app root argocd.argoproj.io/refresh=hard` | 🔴 그대로 |
-| `argocd-application-controller` 재시작 후 5분 | 🔴 그대로 |
+🔴🔴 **그래도 안 깨어나면 — 먼저 `root` 의 멈춘 작업을 봅니다** `[2026-10-28 실측 · 이것 때문에 16분 낭비]`
 
-🔴 **당일 대처 — 자식 Application 의 패치를 직접 지웁니다**(검증 안 된 경로입니다. 돌려 보고 결과를 10.4「발견」에 적으십시오):
+Argo CD 는 `status.operationState.phase == Running` 인 동안 **새 동기화를 시작하지 않습니다.** 조사 중 제가 `argocd app sync root --force` 로 만든 작업 하나가 `Retrying operation. Attempt #4` 로 멈춰 **16분간 모든 전파를 막았고**, 이미 고친 코드까지 「실패」로 보이게 했습니다. 작업을 끝낸 뒤 **22초**에 정상 동작했습니다.
+
+```bash
+kubectl --context "$TOKYO" -n argocd get application root \
+  -o jsonpath='{.status.operationState.phase}{"  "}{.status.operationState.message}{"\n"}'
+# 🔴 Running 이면 아래로 끝내고 다시 봅니다. Succeeded / Failed / 빈 값이면 정상입니다.
+
+kubectl --context "$TOKYO" config set-context --current --namespace=argocd
+# 🔴 `argocd --core` 는 이 네임스페이스 전환이 필요합니다 — ARGOCD_NAMESPACE 도 `-N` 도 안 먹습니다.
+argocd --core app terminate-op root
+```
+
+🔴 **훈련 중에는 `--force` 동기화를 쓰지 마십시오.** 이 함정의 출처가 그것입니다(`--force` 는 `--server-side` 와 같이 쓸 수도 없습니다).
+
+---
+
+🔴 **멈춘 작업도 없는데 안 깨어나면 — 자식 Application 의 패치를 직접 지웁니다**(수정 뒤에는 한 번도 필요하지 않았던 경로입니다. 썼으면 결과를 10.4「발견」에 적으십시오):
 
 ```bash
 for a in api-module-evaluation api-module-grading api-module-interpolation \
