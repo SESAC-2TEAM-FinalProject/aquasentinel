@@ -60,8 +60,10 @@ variable "dr_mode" {
     한다 — 두 변수를 따로 두는 이유다.
 
     🔴 이 변수가 다루지 않는 것
-      - CNPG 승격(`replica.enabled: true→false`) — 런북 ①단계, 데이터가 걸린
-        동작이라 일부러 사람이 한다
+      - CNPG 승격(`replica.enabled: true→false`) — 런북 ①단계. 데이터가 걸린
+        동작이라 **일부러 이 변수에 묶지 않았다**. 승격은 아래
+        `promote_tokyo_db` 를 따로 켜야 일어난다 — `dr_mode=active` 한 줄로
+        DB 까지 승격되면 "스위치만 올리면 된다"는 오해가 생긴다
       - 승격 뒤 비밀번호 맞추기 · Route53 — 런북 ④⑤단계
   EOT
   type        = string
@@ -71,6 +73,39 @@ variable "dr_mode" {
     condition     = contains(["standby", "active"], var.dr_mode)
     error_message = "dr_mode 는 standby 또는 active 여야 한다."
   }
+}
+
+variable "promote_tokyo_db" {
+  description = <<-EOT
+    🔴 도쿄 CNPG 를 **승격**한다 — 복제본(Replica Cluster) → Primary.
+    훈련 **5단계 전용**이고, 되돌릴 수 없는 단계다.
+
+    무엇을 바꾸는가 — applications.tf 의 Cluster 패치에서
+    `spec.replica.enabled` 를 `true → false` 로 만든다. `source` 는 CRD 가
+    required 라 끈 뒤에도 그대로 둔다(CNPG 가 무시한다).
+
+    🔴 왜 kubectl 이 아니라 변수인가 — 그 Argo Application 의 동기화
+    정책이 `automated.selfHeal = true` 라, 손으로 바꾼 값을 Argo 가 원하는
+    상태(= 패치에 박힌 true)로 **되돌린다**. 원하는 상태 자체를 바꿔야 한다.
+
+    🔴🔴 4단계(`3-gitops` 첫 apply)에서는 켜지 마라.
+      처음부터 false 로 뜨면 도쿄는 **애초에 복제본이 아니게** 된다 — S3
+      백업을 한 번 복구하고 거기서 멈추므로 서울을 따라가지 않는다. 그러면
+      ⸨1⸩ 5단계(승격)에 잴 것이 없고 ⸨2⸩ 2부 스트리밍이 성립하지 않는다.
+      들키는 자리는 5단계의 `pg_is_in_recovery()` 가 이미 f 로 나오는 것이고,
+      복구는 도쿄 destroy + S3 잔재 삭제 + 재구축(약 1시간)이다.
+
+    🔴🔴 terraform.tfvars 에 적지 마라 — 모든 apply 에 자동으로
+      붙어 위 사고가 난다. **명령줄에서만** 쓴다:
+
+        terraform apply -input=false -var promote_tokyo_db=true
+
+    🔸 5단계 직전에 plan 을 먼저 본다 — `1 to change` 이고 바뀌는 것이
+      Cluster 패치 하나여야 한다. 다른 것이 같이 바뀌면 멈추고 확인한다.
+      (2026-10-28 신설. 도쿄가 없어 아직 실제로 돌려 보지 못했다.)
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "suspend_collectors" {

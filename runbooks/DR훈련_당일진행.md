@@ -21,7 +21,7 @@
 | | 무엇 | 누구 | 없으면 |
 |---|---|---|---|
 | ① | **1부 날짜 확정** | C(재희) | 시작 못 함 |
-| ② | 🔴 **CNPG 승격 절차** — 아래 **부록 A** 참고 | **A 가 먼저 닫아야 함** | **5단계에서 멈춤** |
+| ② | ✅ ~~CNPG 승격 절차~~ — **2026-10-28 닫음**(`promote_tokyo_db` 변수 신설). 🔴 **부록 A 를 5단계 전에 읽으십시오** — 아직 실제로 돌려 본 적이 없습니다 | A | — |
 | ③ | **데드맨 체크 계정**(11-2 `up` 확인 · 뒷정리 #0 Pause) | C | 11-2 못 함 · 🔴 뒷정리 때 **오경보** |
 | ④ | **화면 확인**(11-3) | B(창영) | 「사람이 쓸 수 있다」 증거 없음 |
 | ⑤ | 🔴 **(가-2) 토큰** — 운영 주소 로그인 토큰 · **7단계 직전에** 받습니다(만료 30분) | B(창영) | **RTO 끝을 못 찍음** |
@@ -256,30 +256,95 @@ done
 
 ---
 
-## 부록 A — 🔴🔴 **CNPG 승격: 절차가 아직 없습니다** (10/28 발견)
+## 부록 A — 🔴 CNPG 승격 (1부 5단계 · 2부 5단계)
 
-**1부 5단계 · 2부 5단계가 여기서 막힙니다.** 훈련 전에 닫아야 합니다.
+🔴 **못 되돌리는 단계입니다.** 명령을 치기 전에 아래 순서를 끝까지 읽으십시오.
 
-### 무엇이 문제인가 `[코드 실측]`
+### A.1 무엇을 하는 것인가
+
+도쿄 DB 는 **복제본**(Replica Cluster)입니다 — 읽기만 되고 서울을 계속 따라갑니다. 승격은 그 DB 를 **주인(Primary)** 으로 바꿔 쓰기가 되게 하는 것입니다. 바뀌는 값은 하나 — `spec.replica.enabled` 가 `true → false` 입니다.
+
+### A.2 🔴 `kubectl` 로 하지 않습니다
 
 | | |
 |---|---|
-| 승격이란 | 도쿄 Cluster 의 `spec.replica.enabled` 를 `true → false` 로 바꾸는 것 |
-| 그런데 그 값을 누가 쥐고 있나 | 🔴 `tokyo/rebuild/3-gitops/applications.tf` 의 kustomize 패치가 **`{enabled = true, source = "seoul"}` 를 박아 넣습니다**(77~79행). 🔴 **`dr_mode` 와 무관하게 늘 들어갑니다** — `dr_mode=active` 는 ②③(Keycloak·web-backend·PushSecret)만 깨웁니다 |
-| 왜 `kubectl patch` 로는 안 되나 | 🔴 그 Application 의 동기화 정책이 **`automated.selfHeal = true`** 입니다(실측). 손으로 바꾼 값은 Argo 가 **원하는 상태(=true)로 되돌립니다** `[추론 — 강한 근거]` |
-| 지금 문서 상태 | 계획서 5단계는 **「① CNPG 승격」이라고만** 적혀 있고 **명령이 없습니다.** 런북 6개에도 없습니다 |
+| 왜 | 그 값을 **Argo CD 가 쥐고 있습니다.** `applications.tf` 의 kustomize 패치가 `enabled` 를 박아 넣고, 그 Application 의 동기화 정책이 **`automated.selfHeal = true`** 입니다 `[실측]` |
+| 그래서 | `kubectl patch` 로 바꾼 값은 Argo 가 **원하는 상태로 되돌립니다** `[추론 — 강한 근거]`. 승격이 풀립니다 |
+| 대신 | 🔸 **원하는 상태 자체를 바꿉니다** — `promote_tokyo_db` 변수(2026-10-28 신설) |
 
-🔴 **이것은 되돌릴 수 없는 단계입니다.** 장애 한가운데서 즉흥으로 하면 안 됩니다.
+### A.3 절차
 
-### 세 가지 길
+**① 먼저 지금 상태를 찍습니다** — 승격 전이 맞는지 확인합니다.
 
-| | 방법 | 장점 | 단점 |
-|---|---|---|---|
-| **(가)** | 승격 전에 Argo 자동 동기화를 끄고(`argocd app set <app> --sync-policy none`) `kubectl patch` | 코드 변경 **0** | 🔴 끈 동안 다른 것도 안 고쳐집니다 · **다시 켜는 것을 잊으면** 뒷정리에 남습니다 · RTO 에 사람 손 단계가 **둘** 늡니다 |
-| **(나)** 🔸 **A 권고** | `3-gitops` 에 **`promote_tokyo_db`**(기본 `false`) 변수를 신설해 `/spec/replica` 의 `enabled` 를 그 변수로. 승격은 `terraform apply -var promote_tokyo_db=true` 한 줄 | Argo 와 싸우지 않습니다(원하는 상태가 바뀌므로) · **코드로 남아 재현**됩니다 · 🔸 **「승격은 사람이 따로 한다」 설계 의도 유지** — `dr_mode` 와 섞지 않습니다 | 코드 변경 1건 + MR · `3-gitops` 증분 apply 시간이 RTO 에 들어갑니다(몇 분) |
-| **(다)** | CNPG 1.30 분산 토폴로지(`replica.primary`/`self`/`promotionToken`)로 바꾸기 | 공식 승격 경로 | 🔴 구성 변경이 큽니다 — 훈련 전에 할 일이 아닙니다 |
+```bash
+date -u +%FT%TZ | tee -a "$DRILL_DIR/times.txt"       # T_promote_start
+kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT pg_is_in_recovery();"     # 🔴 t 여야 합니다
+kubectl --context "$TOKYO" get cluster -n aquasentinel-db aquasentinel-pg \
+  -o jsonpath='{.spec.replica}{"\n"}'                     # enabled:true 확인
+```
 
-🔴 **(나)를 권고합니다.** 다만 **시험해 본 적이 없습니다** — 도쿄가 없어 지금은 못 돌립니다. 1부 4단계 뒤, **5단계 직전에 `terraform plan` 으로 「Cluster 패치만 바뀐다」를 먼저 확인**하고 apply 하십시오.
+🔴 **여기서 `f` 가 나오면 멈추십시오.** 이미 주인이라는 뜻이고, 4단계에서 승격 스위치가 잘못 켜졌을 가능성이 큽니다(A.5).
+
+**② plan 을 먼저 봅니다** — 🔴 **건너뛰지 마십시오. 아직 실제로 돌려 본 적이 없는 경로입니다.**
+
+```bash
+cd AWS/terraform/tokyo/rebuild/3-gitops
+terraform plan -input=false -var promote_tokyo_db=true | tee "$DRILL_DIR/promote-plan.log"
+```
+
+| 보이는 것 | 판단 |
+|---|---|
+| `1 to change` 이고 바뀌는 것이 **Cluster 패치 하나** | ✅ 진행 |
+| 다른 것이 같이 바뀜 · `to destroy` 가 0 이 아님 | 🔴 **멈추고 확인** |
+
+**③ apply**
+
+```bash
+terraform apply -input=false -var promote_tokyo_db=true 2>&1 | tee "$DRILL_DIR/promote-apply.log"
+```
+
+**④ 승격됐는지 확인** — Argo 가 반영할 때까지 기다립니다.
+
+```bash
+while true; do
+  printf '%s  ' "$(date -u +%H:%M:%SZ)"
+  kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+    psql -U postgres -tAc "SELECT pg_is_in_recovery();" 2>/dev/null || echo "(조회 실패)"
+  sleep 10
+done | tee -a "$DRILL_DIR/promote.txt"
+```
+
+| 기록할 것 | 기대 | 실측 |
+|---|---|---|
+| `pg_is_in_recovery()` 가 **f** 로 바뀐 시각 | — | ⟨ ⟩ |
+| 승격에 걸린 시간 = 그 시각 − `T_promote_start` | 미실측 | ⟨ ⟩ |
+| CNPG Cluster 상태 | Ready 3/3 | ⟨ ⟩ |
+
+🔸 **2분이 지나도 `t` 면** Argo 동기화 상태를 봅니다 — `kubectl --context "$TOKYO" -n argocd get application <cnpg앱> -o jsonpath='{.status.sync.status}'`. `OutOfSync` 면 Argo 가 아직 안 돈 것이고, `Synced` 인데 `t` 면 🔴 **이 경로가 안 먹는다는 뜻**이라 그대로 적고 A.4 로 갑니다.
+
+### A.4 🔴 안 되면 — 그 자리에서 쓸 대비책
+
+```bash
+# Argo 자동 동기화를 잠시 끄고 손으로 바꿉니다
+argocd app set <cnpg앱> --sync-policy none
+kubectl --context "$TOKYO" patch cluster -n aquasentinel-db aquasentinel-pg \
+  --type=merge -p '{"spec":{"replica":{"enabled":false}}}'
+# 🔴 훈련이 끝나면 **반드시** 되돌립니다 — 빠뜨리면 도쿄 Argo 가 멍한 채 남습니다
+argocd app set <cnpg앱> --sync-policy automated --auto-prune --self-heal
+```
+
+🔴 **이 경로를 쓰게 되면 그 사실과 걸린 시간을 10.4「발견」에 적습니다** — 변수 방식이 안 먹었다는 것이 결과입니다.
+
+### A.5 🔴🔴 하지 말 것
+
+| | 무엇 | 왜 |
+|---|---|---|
+| 1 | **4단계에 `-var promote_tokyo_db=true` 를 붙이는 것** | 처음부터 복제본이 아니게 떠서 **서울을 따라가지 않습니다.** 5단계에 잴 것이 없고 2부 스트리밍도 성립하지 않습니다 |
+| 2 | 🔴 **`terraform.tfvars` 에 적는 것** | **모든 apply 에 자동으로 붙어** 위 사고가 납니다. 명령줄에서만 씁니다 |
+| 3 | 승격 전에 되돌리기(2부 3단계)를 건너뛰는 것 | 승격하면 **#6 을 영영 못 잽니다**(`Stage2…` 3장) |
+
+🔸 1번이 일어나도 **데이터는 안 날아갑니다** — 서울은 멀쩡하고 도쿄는 백업 복구본입니다. 잃는 것은 **시간**(도쿄 destroy + S3 잔재 삭제 + 재구축 ≈ 1시간)입니다.
 
 ---
 

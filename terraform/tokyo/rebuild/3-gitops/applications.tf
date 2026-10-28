@@ -73,9 +73,14 @@ locals {
               value = { recovery = { source = "seoul" } }
             },
             {
-              op    = "add"
-              path  = "/spec/replica"
-              value = { enabled = true, source = "seoul" }
+              op   = "add"
+              path = "/spec/replica"
+              # 🔴 승격 스위치. 평소 true(복제본) → var.promote_tokyo_db 를
+              #   켜면 false 가 되어 **Primary 로 승격**된다(훈련 5단계).
+              #   kubectl 로 못 하는 이유 · 4단계에서 켜면 안 되는 이유는
+              #   variables.tf 의 promote_tokyo_db 설명에 있다.
+              #   source 는 CRD 가 required 라 끈 뒤에도 남긴다.
+              value = { enabled = !var.promote_tokyo_db, source = "seoul" }
             },
             {
               op   = "add"
