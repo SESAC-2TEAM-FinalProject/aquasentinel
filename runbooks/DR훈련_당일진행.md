@@ -141,11 +141,29 @@ terraform apply -input=false -var dr_mode=active
 ```bash
 cd AWS/terraform/tokyo/rebuild/4-edge
 terraform init -backend-config=backend.hcl -input=false
-terraform apply -input=false            # dr-drill. SECONDARY (헬스체크 없음)
+# 🔴🔴 훈련에서는 **반드시** failover_hostnames=[] 를 준다 (아래 상자 참고)
+terraform apply -input=false -var 'failover_hostnames=[]'
 
 # 전환은 서울 쪽 헬스체크를 뒤집어서 합니다
 cd ../../../seoul/rebuild/4-edge
 terraform apply -input=false -var drill_health_check_inverted=true
+```
+
+🔴🔴 **`-var 'failover_hostnames=[]'` 를 빠뜨리면 안 됩니다**(2026-10-28 신설)
+
+| | |
+|---|---|
+| 빠뜨리면 | 운영 도메인 **apex · `auth.` · `grafana.`** 의 SECONDARY 가 **같이 생깁니다** |
+| 왜 나쁜가 | 훈련은 `dr-drill.` 만 넘깁니다(계획서 8.1 (나)안). 그 셋은 **한 번도 안 쓰이는데**, 떠 있는 동안 서울 운영 헬스체크(`f9f9a297`)가 잠깐 흔들리면 🔴 **진짜 사용자가 도쿄로 갑니다** |
+| 🔸 `dr-drill` 은? | **영향 없습니다** — 모듈이 `drill_hostnames` 로 따로 만듭니다 |
+| 🔸 실제 DR 때는 | 기본값(`["", "auth", "grafana"]`)을 그대로 씁니다 — 그때는 운영 도메인도 넘어가야 합니다 |
+
+**확인** — apply 뒤 SECONDARY 가 **`dr-drill.` 하나뿐**인지 봅니다:
+
+```bash
+aws route53 list-resource-record-sets --hosted-zone-id Z04047191I2SWBLU7U7D \
+  --query 'ResourceRecordSets[?Failover==`SECONDARY`].[Name,Type]' --output text
+# 🔴 dr-drill.aquasentinel.cloud. A  한 줄만 나와야 합니다
 ```
 
 ### ④ 🔴 RTO 끝 재기 — **7단계 직후부터** 30초 간격
