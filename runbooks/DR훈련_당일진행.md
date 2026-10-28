@@ -98,25 +98,27 @@ mkdir -p "$DRILL_DIR" && cd "$DRILL_DIR" && echo "$DRILL_DIR"
 | 0 | 사전 점검 · 🔴 도쿄 러너 깨우기 · tfstate 복제본 전환 | `도쿄러너_재해때_깨우기` 2장 · `Terraform상태_리전전환` 3장 | 10분 | 위 0.3 전부 ✅ | ⟨ ⟩ |
 | 0-1 | 🔴 **가정 장애 `T_f` · 선언 `T_d` 기록**(탁상) | — | 2분 | 두 시각이 적힘 · `T_d` 부터 복구 구간 | ⟨ ⟩ |
 | 1 | `tokyo/persistent` 확인 | 0.3 (상시 운영) | 0분 | S3 3 · ACM 1 | ✅ |
-| 2 | `1-network` apply | 아래 ① | **4분** `[사실]` | VPC·서브넷 · `0 to destroy` | ⟨ ⟩ |
-| 3 | `2-cluster` apply | 아래 ① | **19분** `[사실]` | EKS Active · 노드 **3/3** · Redis available | ⟨ ⟩ |
-| **4** | 🔴 **`3-gitops` apply — 1순위 측정** | 아래 ① · 막히면 `WAL아카이빙` | **미실측**(상한 48분) | Argo **40개** Synced/Healthy · CNPG **3/3** | ⟨ ⟩ |
-| **5** | 🔴 **① CNPG 승격** — **못 되돌림 · 사람 판단** | 🔴 **부록 A** | 미실측 | `pg_is_in_recovery()` = **f** | ⟨ ⟩ |
-| 6 | **②③ 깨우기** | 아래 ② | 미실측 | Keycloak·web-backend·api-module 기동 (🔴 수집기는 멈춘 채) | ⟨ ⟩ |
-| 7 | 🔴 **④ 비밀번호 맞추기** | **`DB다시부트스트랩`** | 미실측 | 파드 Ready · `/readyz` 200 · PG 로그 `password authentication failed` **0** | ⟨ ⟩ |
-| 8 | 🔴 **⑤ `4-edge` apply — 첫 실행** | `드릴레코드_전환` · 아래 ③ | 미실측 | `dr-drill.` **SECONDARY 레코드** 생성 | ⟨ ⟩ |
-| 9 | **Stage 0 RPO** — 복구 가능 시점 | CNPG 복구 로그 | 3분 | 🔴 분해능 = `archive_timeout` **5분** | ⟨ ⟩ |
+| 2 | `1-network` apply | 아래 **①-가** | **4분** `[사실]` · 🔸 리허설 **2분 5초** | VPC·서브넷 · `0 to destroy` | ⟨ ⟩ |
+| 3 | `2-cluster` apply · 🔴 **409 함정** | 아래 **①-가** | **19분** `[사실]` · 🔸 리허설 **19분 29초**(함정 대응 포함) | EKS Active · 노드 **3/3** · Redis available | ⟨ ⟩ |
+| **4** | 🔴 **`3-gitops` apply — 1순위 측정 · 🔴 `plan` 불가** | 아래 **①-나** · 막히면 `WAL아카이빙` | 🔸 리허설 **16분 42초**(Terraform 4:46 + Argo 수렴 11분) · 상한 48분 | 🔴 Argo **39/40**(`keycloak` 만 Degraded = standby 정상) · CNPG **3/3** | ⟨ ⟩ |
+| **5** | 🔴 **① CNPG 승격** — **못 되돌림 · 사람 판단** | 🔴 **부록 A** | 🔸 리허설 **1분 27초**(`f` 전환은 **28초**) | `pg_is_in_recovery()` = **f** · `transaction_read_only=off` | ⟨ ⟩ |
+| 6 | **②③ 깨우기** · 🔴🔴 **플래그 2개** | 아래 ② | 🔸 리허설 Terraform 18초 + Keycloak 기동 **약 2분** | Keycloak `instances:1`·파드 Ready · 🔴 **Rollout 4개 `replicas>0` · ScaledObject 4개**(아래 ② 함정) · 🔴 수집기는 멈춘 채 | ⟨ ⟩ |
+| 7 | 🔴 **④ 비밀번호 맞추기** | **`DB다시부트스트랩`** | 🔸 리허설 **7분 44초** | 파드 Ready · `/readyz` 200 · PG 로그 `password authentication failed` **0** | ⟨ ⟩ |
+| 8 | 🔴 **⑤ `4-edge` apply** | `드릴레코드_전환` · 아래 ③ | 🔸 리허설 **35초**(도쿄 쪽만) | `dr-drill.` **SECONDARY 1줄** · 🔴 운영 도메인 SECONDARY **0** | ⟨ ⟩ |
+| 9 | **Stage 0 RPO** — 복구 가능 시점 | CNPG 복구 로그 · 🔸 아래 ⑤ | 3분 | 🔴 분해능 = `archive_timeout` **5분** · 🔸 리허설 참고값 **약 12분** | ⟨ ⟩ |
 | 10 | **데이터 공백** | `collector-completeness` 대조 | 5분 | 공백 구간 기록 | ⟨ ⟩ |
 | 11 | 측정값 수집 | 4장 | 10분 | 단계별 시각 · 증거 파일 | ⟨ ⟩ |
 | 11-1 | DNS 가 넘어갔나 | `dig dr-drill.aquasentinel.cloud` | 2분 | 응답이 **도쿄 ALB** | ⟨ ⟩ |
 | 11-2 | 🔴 데드맨 `new → up` | Healthchecks.io 화면 | 2분 | **C(계정) · A(확인)** | ⟨ ⟩ |
 | 11-3 | 🔴 **화면 눈으로** | 브라우저 | 5분 | **B** — `dr-drill.` 로그인 → 대시보드 본문까지 | ⟨ ⟩ |
-| 12 | 🔴 **뒷정리** | 3장 | **34분** `[사실]` | 과금 자원 **0** | ⟨ ⟩ |
+| 12 | 🔴 **뒷정리** — 🔴 **함정 2건** | 3장 | **34분** `[사실]` · 🔸 리허설 **49분**(함정 대응 포함) | 과금 자원 **0** · 🔴 **3장 3.1·3.2 까지** | ⟨ ⟩ |
 
-### ① Terraform apply (2·3·4단계 공통)
+### ①-가 Terraform apply — **2·3단계만** (`1-network` · `2-cluster`)
+
+🔴 **4단계(`3-gitops`)는 이 묶음을 쓰지 않습니다.** 아래 ①-나 를 씁니다 — `plan` 이 구조적으로 성립하지 않습니다.
 
 ```bash
-cd AWS/terraform/tokyo/rebuild/<1-network|2-cluster|3-gitops>
+cd AWS/terraform/tokyo/rebuild/<1-network|2-cluster>
 date -u +%FT%TZ | tee -a "$DRILL_DIR/times.txt"           # 시작
 terraform init -backend-config=backend.hcl -input=false
 terraform plan  -input=false -out=tfplan                  # 🔴 0 to destroy 확인
@@ -124,17 +126,186 @@ terraform apply -input=false tfplan 2>&1 | tee apply.log
 date -u +%FT%TZ | tee -a "$DRILL_DIR/times.txt"           # 끝
 ```
 
-🔸 **CI 수동 잡으로 돌려도 됩니다**(`apply:tokyo-dr`). 그 경우 잡 시작·끝 시각을 GitLab 화면에서 읽어 적습니다.
+🔴🔴 **함정 — `2-cluster` 가 로컬 apply 에서 409 로 죽습니다** `[2026-10-28 리허설 실측]`
 
-### ② ②③ 깨우기 (6단계)
+```
+Error: creating EKS Access Entry (...:user/sesac13): StatusCode: 409
+  ResourceInUseException: The specified access entry resource is already in use
+  with module.eks.aws_eks_access_entry.team["sesac13"]
+```
+
+| | |
+|---|---|
+| 왜 | `modules/aws-eks/main.tf:94` 의 `bootstrap_cluster_creator_admin_permissions = true` 가 **클러스터를 만든 주체**에게 access entry 를 **자동 생성**합니다. 그런데 `2-cluster/terraform.tfvars` 의 `team_members` 에도 `sesac13` 이 있어 Terraform 이 **같은 entry 를 또** 만듭니다 |
+| 언제 터지나 | 🔴 **로컬에서 `sesac13` 으로 apply 할 때** — 위 ①-가 의 기본 경로입니다 |
+| 언제 안 터지나 | **CI(`apply:tokyo-dr`)** — 생성자가 `role/aquasentinel-gitlab-terraform-apply` 라 겹치지 않습니다(10/25 실측) |
+| 🔸 다른 팀원은? | `changyoung`·`jaehee` 는 생성자가 아니라 **정상 생성**됩니다 — 막히는 건 **apply 를 돌린 사람 하나뿐** |
+
+**복구 — 2줄이면 됩니다** (apply 를 다시 돌리기 전에):
+
+```bash
+# 자동 생성된 entry 를 state 로 들입니다. <USER> 는 apply 를 돌린 주체(= aws sts get-caller-identity 의 Arn)
+terraform import 'module.eks.aws_eks_access_entry.team["sesac13"]' \
+  'aquasentinel-dr-apne1-eks:arn:aws:iam::379937169195:user/sesac13'
+terraform plan -input=false -out=tfplan   # 🔴 `0 to destroy` · 바뀌는 건 기본 태그뿐이어야 합니다
+terraform apply -input=false tfplan
+```
+
+🔸 10/28 리허설에서 이 2줄로 **36초**에 풀렸습니다(`3 to add, 1 to change, 0 to destroy`).
+
+### ①-나 🔴 `3-gitops` apply — **4단계 전용 · 3토막**
+
+🔴🔴 **`terraform plan` 을 먼저 돌리지 마십시오. 성립하지 않습니다** `[10/25 함정 ⑿ · 10/28 리허설 재확인]`
+
+```
+Error: API did not recognize GroupVersionKind from manifest (CRD may not be installed)
+  no matches for kind "Application" in group "argoproj.io"
+  → root_app · loki_app · grafana_app · kube_prometheus_stack_app …
+```
+
+`kubernetes_manifest` 는 **plan 시점에** CRD 가 클러스터에 있어야 하는데, Argo CD CRD 는 **같은 apply 안의 `helm_release.argocd`** 가 만듭니다. 닭과 달걀입니다. **CI 가 apply 를 3토막으로 쪼갠 이유가 정확히 이것입니다**(`.gitlab-ci.yml:320~324`).
 
 ```bash
 cd AWS/terraform/tokyo/rebuild/3-gitops
-terraform apply -input=false -var dr_mode=active
+date -u +%FT%TZ | tee -a "$DRILL_DIR/times.txt"           # 시작
+terraform init -backend-config=backend.hcl -input=false
+
+# ① Argo CD 설치 → CRD 생성
+terraform apply -target=helm_release.argocd -input=false -auto-approve 2>&1 | tee apply-1.log
+# ② 🔸 도쿄에는 wait_for_karpenter_crds 가 없어 **no-op** 입니다.
+#    "Resource targeting is in effect" 경고만 뜨고 exit 0 — 정상입니다(10/25 확인).
+terraform apply -target=null_resource.wait_for_karpenter_crds -input=false -auto-approve 2>&1 | tee apply-2.log
+# ③ 전체
+terraform apply -input=false -auto-approve 2>&1 | tee apply-3.log
+
+date -u +%FT%TZ | tee -a "$DRILL_DIR/times.txt"           # 끝(Terraform)
+```
+
+🔴 **`-auto-approve` 를 쓰는 근거** — 이 컴포넌트는 `plan` 을 볼 수 없습니다. 대신 **apply 전에 state 가 비어 있는지**로 안전을 확인합니다:
+
+```bash
+terraform state list | wc -l    # 🔴 첫 구축이면 0 이어야 합니다. 0 이 아니면 멈추고 확인
+```
+
+🔸 **CI 수동 잡으로 돌려도 됩니다**(`apply:tokyo-dr`). CI 는 위 3토막을 이미 그대로 돌립니다. 그 경우 잡 시작·끝 시각을 GitLab 화면에서 읽어 적습니다. 🔸 **CI 로 돌리면 ①-가 의 409 함정도 피합니다.**
+
+🔴 **Terraform 이 끝난 것 ≠ 서비스가 떴다** — Terraform 은 Argo Application 객체만 만들고 실제 설치는 Argo 가 비동기로 합니다. 4단계 끝 시각은 **아래 수렴 확인**으로 찍습니다:
+
+```bash
+# 1분 간격. 🔴 39/40 에서 멈추는 것이 정상입니다 — 아래 상자 참고
+while true; do
+  kubectl --context "$TOKYO" -n argocd get applications.argoproj.io \
+    -o custom-columns='S:.status.sync.status,H:.status.health.status' --no-headers \
+    | awk '{t++} $1=="Synced"&&$2=="Healthy"{ok++} END{print strftime("%FT%TZ",systime(),1), ok"/"t}' \
+    | tee -a "$DRILL_DIR/argo.txt"
+  sleep 60
+done
+```
+
+🔴 **4단계 완료 기준은 `40/40` 이 아니라 `39/40` 입니다** `[2026-10-28 리허설 실측]`
+
+| | 도쿄(standby) | 서울(active) |
+|---|---|---|
+| Keycloak CR `spec.instances` | **0** | 1 |
+| StatefulSet | 0/0 | 1/1 |
+| Argo Application `keycloak` | **Degraded** | Healthy |
+
+`instances: 0` 은 `dr_mode=standby` 가 **일부러** 넣는 패치입니다(`variables.tf` 의 `dr_mode` 설명 — *"Replica Cluster 는 `transaction_read_only` 라 Keycloak 은 구조적으로 못 뜬다"*). **standby 에서 keycloak 이 Healthy 가 될 길이 없습니다.** 10/28 리허설에서 나머지 39개가 11분에 전부 수렴한 뒤 keycloak 만 계속 Degraded 였습니다.
+
+→ **`39/40` + `keycloak` 만 Degraded + CNPG `3/3` 이면 4단계 끝입니다.** `40/40` 은 **6단계 깨우기 뒤**에 됩니다. 🔸 이걸 모르면 있지도 않은 문제를 상한 48분까지 기다립니다.
+
+### ② ②③ 깨우기 (6단계)
+
+🔴🔴 **`-var promote_tokyo_db=true` 를 반드시 같이 줍니다. 빠뜨리면 5단계 승격이 풀립니다.**
+
+```bash
+cd AWS/terraform/tokyo/rebuild/3-gitops
+
+# 🔴 먼저 plan — `enabled` 가 바뀌면 멈춥니다(아래 상자)
+terraform plan -input=false -var dr_mode=active -var promote_tokyo_db=true \
+  | tee "$DRILL_DIR/wake-plan.log"
+grep -nE '~ *enabled' "$DRILL_DIR/wake-plan.log"   # 🔴 아무것도 안 나와야 합니다
+
+terraform apply -input=false -var dr_mode=active -var promote_tokyo_db=true
 # 🔴 suspend_collectors 는 건드리지 않습니다 — 기본 true(멈춤) 그대로.
 #    서울이 살아 있는데 도쿄 collector 가 같이 돌면 같은 공공 API 키로
 #    호출이 2배가 되고, 한도에 걸리면 운영 #6·#7 이 깨집니다.
 ```
+
+🔴🔴 **왜 플래그를 또 주는가 — `promote_tokyo_db` 는 끈적하지 않습니다** `[2026-10-28 리허설 실측]`
+
+`promote_tokyo_db` 의 기본값은 `false` 입니다. 그래서 5단계 뒤에 플래그를 **빼고** apply 하면:
+
+```
+$ terraform plan -var dr_mode=active          # ← 플래그 없이
+Plan: 0 to add, 5 to change, 0 to destroy
+  # kubernetes_manifest.patched_app["cloudnativepg-cluster"] will be updated in-place
+                    ~ enabled = false -> true        🔴🔴 승격이 풀립니다
+```
+
+| | |
+|---|---|
+| 무슨 일이 되나 | 방금 승격한 Primary 가 **다시 복제본**이 되어 `transaction_read_only = on` 으로 돌아갑니다 |
+| 🔴 그런데 | **같은 apply 가 Keycloak 을 `instances: 1` 로 깨웁니다** → 읽기 전용 DB 에 스키마를 쓰려다 **CrashLoop** |
+| 🔴 왜 치명적인가 | 그 증상이 **이미 아는 다른 버그(「도쿄 반영 목록」 #21 비밀번호 불일치)와 구별되지 않습니다.** 10/25 에 Keycloak CrashLoop 18회·82분을 겪은 그 화면이 그대로 나오고, **진짜 원인(플래그 누락)은 어디에도 안 보입니다** |
+| 복구 | `-var promote_tokyo_db=true` 로 다시 apply (승격 자체는 되돌아오지만, 그 사이 쓰기가 들어갔다면 **그 쓰기는 사라집니다**) |
+
+🔴 **규칙 — 5단계 이후 `3-gitops` 를 건드리는 모든 apply 에 `-var promote_tokyo_db=true` 를 붙입니다.** 6단계 · 2부 재적용 · destroy 까지 전부입니다. `variables.tf` 의 🔴🔴 경고(「`terraform.tfvars` 에 적지 마라」)는 **5단계 전**의 사고만 막습니다 — 5단계 뒤의 반대 사고는 이 규칙으로 막습니다.
+
+---
+
+🔴🔴 **함정 — `dr_mode=active` 가 api-module 가공·판정을 못 깨웁니다** `[2026-10-28 리허설 실측 · 미해결]`
+
+apply 는 `exit 0` 이고 Argo 는 `Synced/Healthy` 인데, **실제로는 안 깨어납니다.**
+
+| 층 | 10/28 실측 |
+|---|---|
+| Terraform → `root` Application **live** | 🟢 올바름 — `api-module-evaluation` 패치가 `{images: […]}` 뿐(standby 패치 제거됨) |
+| git 의 `apps/api-module-evaluation/application.yaml` | 🟢 그 패치 **애초에 없음** |
+| **자식** Application `api-module-evaluation` live | 🔴 **standby 패치 3건 그대로** — `replicas:0` · ScaledObject `$patch: delete` · `evaluation-sweep suspend:true` |
+| 자식 상태 | 🔴 `Synced` / `Healthy` ← **다른데도 같다고 봅니다** |
+| 결과 | Rollout `evaluation`·`grading`·`interpolation`·`processor` 전부 **`replicas=0`** · ScaledObject **0개** (서울은 1/2/2/2) |
+
+🔸 **`keycloak`·`web` 은 정상 깨어납니다** — 그 둘은 Terraform 이 `patched_app` 으로 **자식 Application 을 직접** 관리하고, api-module 은 `root` 의 kustomize 를 거칩니다. 깨지는 건 **거쳐 가는 쪽**입니다.
+
+**해 본 우회 — 전부 실패했습니다**
+
+| 시도 | 결과 |
+|---|---|
+| 그냥 대기 7분 | 🔴 패치 3건 그대로 |
+| `kubectl annotate app root argocd.argoproj.io/refresh=hard` | 🔴 그대로 |
+| `argocd-application-controller` 재시작 후 5분 | 🔴 그대로 |
+
+🔴 **당일 대처 — 자식 Application 의 패치를 직접 지웁니다**(검증 안 된 경로입니다. 돌려 보고 결과를 10.4「발견」에 적으십시오):
+
+```bash
+for a in api-module-evaluation api-module-grading api-module-interpolation \
+         api-module-processor api-module-completeness-check; do
+  kubectl --context "$TOKYO" -n argocd patch application "$a" --type=json \
+    -p '[{"op":"remove","path":"/spec/source/kustomize/patches"}]' 2>/dev/null \
+    && echo "  patched $a"
+done
+# 🔸 root 가 Synced 로 보고 있어 selfHeal 이 되돌리지 않을 것으로 봅니다 [추론]
+#    되돌려지면 root 의 automated 를 잠시 끄고(아래) 다시 시도합니다.
+#    kubectl -n argocd patch application root --type=merge \
+#      -p '{"spec":{"syncPolicy":{"automated":null}}}'
+#    🔴 끈 뒤 **반드시 복구**합니다:
+#    kubectl -n argocd patch application root --type=merge \
+#      -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+```
+
+**깨어났는지 확인** — 이게 6단계의 진짜 완료 조건입니다:
+
+```bash
+kubectl --context "$TOKYO" -n api-module get rollout \
+  -o custom-columns='NAME:.metadata.name,DESIRED:.spec.replicas,READY:.status.readyReplicas'
+# 🔴 서울 기준값: evaluation=1 · grading=2 · interpolation=2 · processor=2
+kubectl --context "$TOKYO" -n api-module get scaledobject    # 🔴 0개면 안 깨어난 것
+```
+
+🔸 **왜 중요한가** — 계획서가 정한 DR 복구 완료의 기준이 *「해양 데이터가 다시 신선해지는 것」* 이고 그걸 되살리는 주체가 이 4개 워크로드입니다. 안 깨어나면 **전환이 완료되지 않습니다.**
+
+🔸 **수집기는 그대로 멈춰 있어야 정상입니다** — `suspend_collectors` 는 `dr_mode` 와 **다른 축**(`apps-kustomize.tf:45`)이라 `dr_mode=active` 여도 `collector-*` 6개는 `suspend=true` 를 유지합니다 `[10/28 실측 · terraform show -json 으로 확인]`. `dr_mode=active` 가 빼는 suspend 는 `evaluation-sweep`·`interpolation-error` 둘뿐이고, 이들은 공공 API 를 호출하지 않습니다.
 
 ### ③ ⑤ 드릴 레코드 (8단계 — 도쿄 SECONDARY 만듦)
 
@@ -189,6 +360,17 @@ done
 
 🔴 **도쿄 ALB 에 직접 부릅니다.** `dr-drill.` 로 부르면 DNS 전환(헬스체크 90초 + ALIAS 캐시 60초)이 끝 시각에 섞입니다. 🔸 도쿄 ACM 이 `*.aquasentinel.cloud` 라 Host/SNI 만 맞추면 인증서는 통과합니다 `[10/28 실측]`.
 
+🟢 **이 명령을 2026-10-28 리허설에서 실제로 돌렸습니다 — 전부 통합니다** `[사실]`
+
+| 호출 | 결과 |
+|---|---|
+| `/readyz` | **200** · TLS 0.19s · total 0.26s |
+| `/healthz` · `/metrics` | **200** · **200** |
+| `/` (프론트) | **200** |
+| `/api/farms/$FARM_ID/status` — **토큰 없이** | **401** ← 인증이 제대로 걸려 있다는 뜻 |
+
+🔸 즉 **`$TOKEN` 이 비어 있으면 `status=401` 로 영원히 돌게 됩니다.** 0.1 ⑤ 의 (가-2) 토큰을 **7단계 직전에** 받는 이유입니다. 폴링을 걸기 전에 `[ -n "$TOKEN" ]` 를 확인하십시오.
+
 🔸 **8단계 뒤 `dr-drill.` 로 한 번 더 200 을 확인**해 「경로가 실제로 열린 시각」을 **별도 행**으로 남깁니다.
 
 ---
@@ -219,11 +401,145 @@ done
 | 5 | 드릴 헬스체크 | `-var drill_health_check_inverted=false` 로 원복 |
 | **6** | 🔴 **도쿄 러너 다시 Paused** | GitLab Runners 화면 |
 | **6-1** | 🔴🔴 **S3 잔재 — `cloudnativepg-tokyo/` · 도쿄 Thanos 블록** | 🔴 **안 지우면 다음 구축이 `Expected empty archive` 로 멈춥니다**(10/25 실제) |
-| 7 | 과금 자원 **0** | 0.3 명령 재실행 |
-| 8 | 남기는 것 | `tokyo/persistent`(S3 3 · ACM 1) · Secrets · ECR |
-| 9 | 기본 컨텍스트 | `kubectl config use-context $SEOUL` |
+| 7 | 과금 자원 **0** | 아래 **3.3** 명령 |
+| 8 | 남기는 것 | `tokyo/persistent`(S3 3 · ACM 1) · Secrets · ECR · 🔸 러너 EC2(Paused) |
+| 9 | 기본 컨텍스트 | `kubectl config use-context $SEOUL` · 🔸 `dr-tokyo` 컨텍스트 항목도 삭제 |
 
-🔴 **6-1 지울 때 접두사를 눈으로 확인하십시오** — `cloudnativepg/`(끝에 `-tokyo` 없음)는 **서울 백업의 복제본이자 DR 자산**(지금 4,367개)이라 지우면 **리전 장애 때 복구가 불가능**해집니다.
+🔴 **6-1 지울 때 접두사를 눈으로 확인하십시오** — `cloudnativepg/`(끝에 `-tokyo` 없음)는 **서울 백업의 복제본이자 DR 자산**(지금 4,413개)이라 지우면 **리전 장애 때 복구가 불가능**해집니다. 🔸 판별은 **접두사 이름이 아니라 `ReplicationStatus`** 로 합니다 — 아래 3.2.
+
+### 3.1 🔴🔴 `3-gitops` destroy 가 네임스페이스에서 멈춥니다 `[2026-10-28 리허설 실측]`
+
+```
+Error: Kubernetes delete error
+  timeout while waiting for resource to be gone (last state: 'Terminating', timeout: 5m0s)
+```
+
+`monitoring` 네임스페이스가 **영구히** `Terminating` 입니다. 원인이 **둘**이고 **둘 다** 고쳐야 합니다.
+
+| | 무엇이 막나 | 왜 |
+|---|---|---|
+| **(a)** | 고아 **webhook** 이 삭제 **요청**을 거부 | destroy 가 `external-secrets` 네임스페이스를 **먼저** 지웠는데, 클러스터 범위인 `externalsecret-validate`·`secretstore-validate`(둘 다 `failurePolicy: Fail`)가 남아 **모든 ExternalSecret 삭제를 거부**합니다 |
+| **(b)** | 고아 **finalizer** 가 삭제 **완료**를 막음 | `externalsecrets.external-secrets.io/externalsecret-cleanup` 를 떼어 줄 **컨트롤러가 이미 사라졌습니다** |
+
+확인하는 법 — 네임스페이스 조건에 그대로 적혀 있습니다:
+
+```bash
+kubectl --context "$TOKYO" get ns monitoring \
+  -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.message}{"\n"}{end}'
+# (a) NamespaceDeletionContentFailure=True ... service "external-secrets-webhook" not found
+# (b) NamespaceFinalizersRemaining=True ... externalsecret-cleanup in N resource instances
+```
+
+**복구 — 순서대로**:
+
+```bash
+# (a) 고아 webhook 제거
+kubectl --context "$TOKYO" delete validatingwebhookconfiguration \
+  externalsecret-validate secretstore-validate
+
+# (b) 남은 ExternalSecret 의 finalizer 를 직접 비움 (네임스페이스 전수)
+for ns in $(kubectl --context "$TOKYO" get ns --no-headers | awk '$2=="Terminating"{print $1}'); do
+  for n in $(kubectl --context "$TOKYO" -n "$ns" get externalsecrets.external-secrets.io \
+             -o name --ignore-not-found 2>/dev/null); do
+    kubectl --context "$TOKYO" -n "$ns" patch "$n" --type=merge \
+      -p '{"metadata":{"finalizers":[]}}'
+  done
+done
+
+# destroy 를 다시 돌립니다 (🔴 플래그 2개 유지)
+cd AWS/terraform/tokyo/rebuild/3-gitops
+terraform destroy -input=false -auto-approve -var dr_mode=active -var promote_tokyo_db=true
+terraform state list | wc -l    # 🔴 0 이어야 합니다
+```
+
+🔸 10/28 리허설에서 1회차 `exit 1`(58분 묶임) → 위 2줄 → 2회차 `exit 0` · state 0개. **10/25 뒷정리 34분의 원인일 가능성이 큽니다.**
+
+### 3.2 🔴🔴 Terraform 뒤에 **손으로 걷어낼 3종** `[2026-10-28 리허설 실측]`
+
+`terraform destroy` 는 **자기 state 에 있는 것만** 지웁니다. 아래 셋은 **컨트롤러가 만든 것**이라 state 에 없고, 둘은 **계속 과금**되며 둘은 **VPC 삭제를 막습니다.**
+
+| 조각 | 만든 주체 | 과금 | VPC 차단 |
+|---|---|---|---|
+| **ALB** `k8s-ingress-aquasent-*` + 대상 그룹 | **LBC**(Gateway 보고) | 🔴 **예** | 🔴 예(서브넷 ENI) |
+| **EBS** `*-dynamic-pvc-*` (리허설 때 **6개 · 60 GiB**) | **EBS CSI**(PVC 보고) | 🔴 **예** | 아니오 |
+| **SG** `k8s-ingress-aquasent-*` · `k8s-traffic-*` | **LBC** | 아니오 | 🔴 **예** |
+
+🔸 증상은 **`1-network` destroy 가 서브넷·IGW·VPC 에서 멈추는 것**입니다. 10/28 엔 VPC 하나에 7분 31초 걸렸습니다.
+
+```bash
+export AWS_PAGER=""
+R=ap-northeast-1
+
+# ① ALB 먼저 (ENI 를 놓아 줍니다)
+for arn in $(aws elbv2 describe-load-balancers --region $R \
+             --query 'LoadBalancers[].LoadBalancerArn' --output text); do
+  aws elbv2 delete-load-balancer --region $R --load-balancer-arn "$arn"
+done
+# ② ALB 가 완전히 사라진 뒤 대상 그룹
+until [ "$(aws elbv2 describe-load-balancers --region $R --query 'length(LoadBalancers)' --output text)" = 0 ]; do sleep 10; done
+for tg in $(aws elbv2 describe-target-groups --region $R --query 'TargetGroups[].TargetGroupArn' --output text); do
+  aws elbv2 delete-target-group --region $R --target-group-arn "$tg"
+done
+# ③ 고아 EBS (🔴 available 인 것만 — in-use 는 러너 루트 볼륨입니다)
+for v in $(aws ec2 describe-volumes --region $R --filters Name=status,Values=available \
+           --query 'Volumes[].VolumeId' --output text); do
+  aws ec2 delete-volume --region $R --volume-id "$v"
+done
+# ④ LBC 고아 SG — 서로 참조하므로 규칙을 먼저 비웁니다
+for sg in $(aws ec2 describe-security-groups --region $R \
+            --query "SecurityGroups[?starts_with(GroupName,'k8s-')].GroupId" --output text); do
+  for d in ingress egress; do
+    K=IpPermissions; [ $d = egress ] && K=IpPermissionsEgress
+    P=$(aws ec2 describe-security-groups --region $R --group-ids "$sg" --query "SecurityGroups[0].$K" --output json)
+    [ "$P" != "[]" ] && aws ec2 revoke-security-group-$d --region $R --group-id "$sg" --ip-permissions "$P" >/dev/null
+  done
+  aws ec2 delete-security-group --region $R --group-id "$sg"
+done
+```
+
+**S3 잔재는 `ReplicationStatus` 로 가릅니다** — 🔴 **접두사 이름으로 판단하지 마십시오.**
+
+```bash
+# RS=None  → 도쿄가 직접 쓴 것 = 지움
+# RS=REPLICA → 서울에서 CRR 로 온 DR 복구 원본 = 🔴 남김
+for B3 in aquasentinel-dr-tokyo-observability-379937169195 \
+          aquasentinel-dr-tokyo-loki-379937169195 \
+          aquasentinel-dr-tokyo-raw-store-379937169195; do
+  echo "[$B3]"
+  aws s3 ls "s3://$B3/" --recursive | awk -v d="$(date -u +%F)" '$1==d{print $4}' \
+   | awk -F/ '{print $1}' | sort -u | while read -r pre; do
+      K=$(aws s3 ls "s3://$B3/$pre/" --recursive | head -1 | awk '{print $4}')
+      RS=$(aws s3api head-object --bucket "$B3" --key "$K" --query ReplicationStatus --output text)
+      echo "   $pre/  RS=$RS"
+    done
+done
+# 10/28 실측: cloudnativepg-tokyo/ 168개 RS=None(삭제) · loki fake/·index/ 32개 RS=None(삭제)
+#             cloudnativepg/·thanos/·raw/ 는 전부 RS=REPLICA(남김)
+```
+
+🔸 **도쿄 Thanos 블록은 2시간 블록 주기 때문에 1부(약 1시간)에는 안 생길 수 있습니다** — 10/28 엔 `thanos/` 의 당일 객체 27개가 **전부 `RS=REPLICA`** 였습니다. 10/25 의 「도쿄 블록 3」과는 다른 상황이니 **세지 말고 `RS` 로 판별**하십시오.
+
+### 3.3 과금 자원 0 — 최종 확인 명령
+
+```bash
+export AWS_PAGER=""; R=ap-northeast-1
+printf "EKS %s · Redis %s · NAT %s · ALB %s · TG %s · VPC %s · EBSavail %s · EIP %s\n" \
+  "$(aws eks list-clusters --region $R --query 'length(clusters)' --output text)" \
+  "$(aws elasticache describe-replication-groups --region $R --query 'length(ReplicationGroups)' --output text)" \
+  "$(aws ec2 describe-nat-gateways --region $R --filter Name=state,Values=available --query 'length(NatGateways)' --output text)" \
+  "$(aws elbv2 describe-load-balancers --region $R --query 'length(LoadBalancers)' --output text)" \
+  "$(aws elbv2 describe-target-groups --region $R --query 'length(TargetGroups)' --output text)" \
+  "$(aws ec2 describe-vpcs --region $R --filters Name=isDefault,Values=false --query 'length(Vpcs)' --output text)" \
+  "$(aws ec2 describe-volumes --region $R --filters Name=status,Values=available --query 'length(Volumes)' --output text)" \
+  "$(aws ec2 describe-addresses --region $R --query 'length(Addresses)' --output text)"
+# 🔴 전부 0 이어야 합니다. Terraform state 도 함께:
+for c in 1-network 2-cluster 3-gitops 4-edge; do
+  printf "  %-12s %s\n" "$c" "$(cd AWS/terraform/tokyo/rebuild/$c && terraform state list | wc -l)"
+done
+```
+
+**2026-10-28 리허설 뒷정리 실측** `[사실]` — 위 전부 **0** · state `1~4` 전부 **0**.
+의도적 상주: EC2 러너 `aquasentinel-dev-gitlab-runner-tokyo`(t3.medium · GitLab **Paused**) + 루트 볼륨 50 GiB `in-use` · CRR 복제본(`cloudnativepg/` 4,413 · `thanos/` 621 · `raw/` 23,477).
 
 ---
 
@@ -336,10 +652,25 @@ done | tee -a "$DRILL_DIR/promote.txt"
 | 기록할 것 | 기대 | 실측 |
 |---|---|---|
 | `pg_is_in_recovery()` 가 **f** 로 바뀐 시각 | — | ⟨ ⟩ |
-| 승격에 걸린 시간 = 그 시각 − `T_promote_start` | 미실측 | ⟨ ⟩ |
+| 승격에 걸린 시간 = 그 시각 − `T_promote_start` | 🔸 리허설 **28초**(안정화까지 1분 27초) | ⟨ ⟩ |
 | CNPG Cluster 상태 | Ready 3/3 | ⟨ ⟩ |
 
-🔸 **2분이 지나도 `t` 면** Argo 동기화 상태를 봅니다 — `kubectl --context "$TOKYO" -n argocd get application <cnpg앱> -o jsonpath='{.status.sync.status}'`. `OutOfSync` 면 Argo 가 아직 안 돈 것이고, `Synced` 인데 `t` 면 🔴 **이 경로가 안 먹는다는 뜻**이라 그대로 적고 A.4 로 갑니다.
+🔸 **2분이 지나도 `t` 면** Argo 동기화 상태를 봅니다 — `kubectl --context "$TOKYO" -n argocd get application cloudnativepg-cluster -o jsonpath='{.status.sync.status}'`. `OutOfSync` 면 Argo 가 아직 안 돈 것이고, `Synced` 인데 `t` 면 🔴 **이 경로가 안 먹는다는 뜻**이라 그대로 적고 A.4 로 갑니다.
+
+🟢 **2026-10-28 리허설에서 이 경로를 실제로 돌렸습니다 — 먹습니다** `[사실]`
+
+| 확인 | 승격 전 | 승격 후 |
+|---|---|---|
+| `terraform plan` | — | **`0 to add, 1 to change, 0 to destroy`** · 바뀐 것은 `patched_app["cloudnativepg-cluster"]` **하나** · diff 는 `enabled = true -> false` 하나 · `source="seoul"`·`barmanObjectName` 유지 |
+| `pg_is_in_recovery()` | `t` | **`f`** (apply 뒤 **28초**) |
+| `SHOW transaction_read_only` | on | **off** |
+| 실제 쓰기 | — | `CREATE TABLE` · `INSERT 0 1` 성공 |
+| CNPG Cluster | 3/3 replica | **`Cluster in healthy state` · 3/3 · `replica.enabled=false`** (1분 27초) |
+| 🔴 `selfHeal` 되돌림 | — | **없음** — 원하는 상태를 바꿨으니 되돌릴 것이 없습니다 |
+
+🔸 그래서 **A.4 대비책은 쓰지 않아도 될 것으로 봅니다.** 다만 당일에도 ② plan 확인은 그대로 합니다.
+
+🔴 **승격 뒤 바로 다음 단계로 가기 전에** — 6단계 명령에 `-var promote_tokyo_db=true` 가 들어 있는지 확인하십시오(1장 ②). 빠지면 **지금 한 승격이 풀립니다.**
 
 ### A.4 🔴 안 되면 — 그 자리에서 쓸 대비책
 

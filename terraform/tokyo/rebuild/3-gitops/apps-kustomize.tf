@@ -74,6 +74,29 @@ locals {
   #     파드를 1개 남기는 알려진 문제가 따로 있다(Argo Rollouts 의 revision==1
   #     게이트 한계). 여기서 Deployment 까지 0 으로 패치하면 Rollouts 컨트롤러와
   #     Argo CD selfHeal 이 서로 되돌리는 싸움이 될 수 있어 건드리지 않는다.
+  # 🔴🔴 2026-10-28 리허설 — **이 묶음을 비우는 것만으로는 깨어나지 않는다**(미해결)
+  #
+  # dr_mode=active 로 apply 하면 root Application 의 live 값은 올바르게 바뀐다
+  # (해당 앱 패치가 {images} 만 남음). git 에도 그 패치는 없다. 그런데 **자식**
+  # Application(api-module-evaluation 등)이 standby 패치 3건을 그대로 들고
+  # `Synced`/`Healthy` 로 판정된다 — Argo 가 「지워야 할 필드」로 보지 않는다.
+  # 결과로 Rollout 4개가 replicas=0 이고 ScaledObject 가 0개로 남는다.
+  #
+  # 우회 3종 전부 실패: 대기 7분 · `argocd.argoproj.io/refresh=hard` ·
+  # argocd-application-controller 재시작 5분.
+  #
+  # 🔸 keycloak·web 은 정상 깨어난다 — 그 둘은 applications.tf 의 patched_app 이
+  #    **자식 Application 을 직접** 관리하고, api-module 은 root 의 kustomize 를
+  #    거친다. 깨지는 쪽은 **거쳐 가는 쪽**이다.
+  #
+  # 🔴 고치는 방향(둘 중 하나, 아직 결정 전 — 도쿄를 띄워야 검증된다)
+  #   ㉠ api-module 가공·판정 앱도 patched_app 으로 옮겨 자식을 직접 관리한다
+  #      (keycloak·web 과 같은, 이미 작동이 확인된 패턴)
+  #   ㉡ 「패치를 빼서 깨운다」를 「값을 뒤집어서 깨운다」로 바꾼다
+  #      (replicas 를 0↔실제값으로, ScaledObject 는 $patch: delete 를 넣고 뺌)
+  #      — 빠진 패치는 Argo 에게 의도를 남기지 않는다는 것이 이번 교훈이다
+  #
+  # 당일 대처는 런북 DR훈련_당일진행.md 1장 ② 의 「당일 대처」 명령.
   app_patches_dr_standby = local.dr_standby ? {
     # Rollout 이 없는 평범한 Deployment — 매니페스트에 replicas: 1 이 있어 replace.
     "api-module-completeness-check" = [
