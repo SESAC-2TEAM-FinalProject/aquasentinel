@@ -102,7 +102,25 @@ variable "promote_tokyo_db" {
 
     🔸 5단계 직전에 plan 을 먼저 본다 — `1 to change` 이고 바뀌는 것이
       Cluster 패치 하나여야 한다. 다른 것이 같이 바뀌면 멈추고 확인한다.
-      (2026-10-28 신설. 도쿄가 없어 아직 실제로 돌려 보지 못했다.)
+
+    🟢 2026-10-28 리허설에서 **실제로 돌렸고 먹는다**. plan 은
+      `0 to add, 1 to change, 0 to destroy` 이고 바뀐 것은
+      `patched_app["cloudnativepg-cluster"]` 하나, diff 는 `enabled = true -> false`
+      하나였다. apply 뒤 `pg_is_in_recovery()` 가 **28초**에 `f` 로 바뀌고
+      `transaction_read_only=off` · 실제 쓰기 성공 · 1분 27초에
+      `Cluster in healthy state` 로 안정화됐다. **selfHeal 되돌림은 없었다.**
+
+    🔴🔴 **이 변수는 끈적하지 않다 — 5단계 이후 모든 apply 에 다시 붙여야 한다.**
+      기본값이 false 라, 승격한 뒤 플래그를 빼고 apply 하면 plan 이
+      `~ enabled = false -> true` 를 내고 **승격이 풀린다**(2026-10-28 리허설에서
+      런북 6단계 명령 그대로 재현). 그런데 같은 apply 가 Keycloak 을
+      `instances: 1` 로 깨우므로, 읽기 전용이 된 DB 에 스키마를 쓰려다
+      **CrashLoop** 이 나고 그 화면이 「도쿄 반영 목록」 #21(비밀번호 불일치)과
+      구별되지 않는다. 즉 **증상으로 원인을 못 찾는다.**
+        → 6단계 · 2부 재적용 · destroy 까지 전부 `-var promote_tokyo_db=true`.
+        → 런북 `DR훈련_당일진행.md` 1장 ② 에 규칙과 plan 확인 절차가 있다.
+      🔸 위의 「tfvars 에 적지 마라」와 모순이 아니다 — tfvars 는 **5단계 전**
+         사고를, 이 규칙은 **5단계 후** 사고를 막는다. 축이 다르다.
   EOT
   type        = bool
   default     = false

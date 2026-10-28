@@ -22,9 +22,47 @@ CNPG 는 recovery 부트스트랩 때 `app` 역할 비밀번호를 **바꾸지 �
 |---|---|---|
 | `aquasentinel-pg-app`(`web` ns) 의 출처 | CNPG 가 만든 값 → **PushSecret** → ExternalSecret | 🔴 PushSecret 이 **standby 에서 제거**돼 있고, ExternalSecret 이 **Secrets Manager 의 `aquasentinel-dr-tokyo-api-module-database-*` 를 바로** 읽습니다 |
 | 어긋나는 방향 | DB 는 옛 값 · 시크릿은 **새 값** | 🔴 DB 는 **백업 뜬 시점의 서울 값** · 시크릿은 **Secrets Manager 에 고정된 값** |
-| **맞출 기준** | 시크릿(새 값) | 🔴 **Secrets Manager 쪽** |
+| **맞출 기준** | 시크릿(새 값) | 🔴 **`aquasentinel-db/aquasentinel-pg-app`** — 아래 0.1 |
 
 🔸 **두 값이 이미 같으면 이 런북은 「확인만」 하고 지나갑니다.** 같은지 다른지는 **미리 알 수 없습니다**(비밀값 조회 금지). **2번에서 `/readyz` 와 PG 로그로 드러납니다** — 그래서 이 단계를 건너뛰면 안 됩니다.
+
+### 0.1 🔴🔴 「맞출 기준」이 **6단계에서 바뀝니다** `[2026-10-28 리허설 실측]`
+
+위 표의 「Secrets Manager 쪽」만 보고 **`web/aquasentinel-pg-app` 의 값**을 기준으로 삼으면 **1시간 안에 다시 깨집니다.** 10/28 실측입니다(값은 적지 않고 sha256 앞 12자로만):
+
+| 값 | 어디 | 10/28 |
+|---|---|---|
+| **A** | 도쿄 `aquasentinel-db/aquasentinel-pg-app` — **CNPG 가 부트스트랩에서 새로 만든 것** | `ff194546c74d` |
+| **B** | 도쿄 `web/aquasentinel-pg-app` — ExternalSecret 이 **옛날에** 읽어 둔 것 | `5436d5dfa712` |
+| **S** | 서울 `aquasentinel-db/aquasentinel-pg-app` — 🔴 **복구된 DB 안에 실제로 들어 있는 값** | `427c4892e4c2` |
+| **SM** | Secrets Manager `…-api-module-database-password` **현재** | **= A** |
+
+**무슨 일이 일어나는가**
+
+1. CNPG 는 recovery 부트스트랩에서 `app` **역할 비밀번호를 바꾸지 않습니다** → DB 안은 **S**(백업 뜬 쪽 값)
+2. 그런데 CNPG 는 **새 시크릿 A** 를 만듭니다 → DB 와 불일치
+3. 🔴 **6단계 깨우기가 PushSecret `aquasentinel-db/api-module-database` 를 되살리고, 그것이 Secrets Manager 를 A 로 덮어씁니다.** 10/28 엔 그 비밀의 `LastChangedDate` 가 **6단계 apply 시각과 초 단위로 같았습니다**
+4. `web/` 쪽은 아직 **B**(낡은 값). ExternalSecret 갱신 주기가 **1시간**이라, 그냥 두면 최대 1시간 뒤 A 로 바뀝니다
+
+→ 🔴 **기준은 A = `aquasentinel-db/aquasentinel-pg-app` 입니다.** PushSecret 이 그 값을 Secrets Manager 로 밀고, 모든 ExternalSecret 이 결국 그 값으로 수렴하기 때문입니다.
+
+🔸 **값을 비교해야 할 때는 해시로 합니다** — 값 자체를 찍지 않습니다:
+
+```bash
+h() { printf '%s' "$1" | shasum -a 256 | cut -c1-12; }
+A=$(kubectl --context "$TOKYO" -n aquasentinel-db get secret aquasentinel-pg-app -o jsonpath='{.data.password}' | base64 -d)
+Bv=$(kubectl --context "$TOKYO" -n web get secret aquasentinel-pg-app -o jsonpath='{.data.password}' | base64 -d)
+echo "A=$(h "$A")  B=$(h "$Bv")"   # 다르면 2~4번을 돌립니다
+```
+
+🔴 **Secrets Manager 는 `SecretBinary` 로 저장돼 있습니다** — `--query SecretString --output text` 로 읽으면 `None`(4글자)이 나와 **엉뚱한 비교를 하게 됩니다.** 10/28 에 제가 실제로 당했습니다. 읽어야 하면:
+
+```bash
+aws secretsmanager get-secret-value --region ap-northeast-1 \
+  --secret-id aquasentinel-dr-tokyo-api-module-database-password --output json \
+ | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); b=d.get("SecretBinary"); print(len(base64.b64decode(b).decode()) if b else len(d.get("SecretString") or ""))'
+# 길이만 찍습니다. 값은 찍지 않습니다.
+```
 
 ---
 
@@ -46,7 +84,7 @@ CNPG 는 recovery 부트스트랩 때 `app` 역할 비밀번호를 **바꾸지 �
 | # | 무엇 | 명령(예) | 끝났다고 보는 확인 | 도쿄 |
 |---|---|---|---|---|
 | 1 | 복구 끝 확인 | `kubectl get cluster -n aquasentinel-db aquasentinel-pg` | Ready 3/3 · 승격했으면 `pg_is_in_recovery()=f` | ✅ 그대로 |
-| 2 | **`app` 역할 비밀번호를 시크릿 값으로** | 시크릿에서 값을 **변수로** 읽어 Primary 에서 `ALTER ROLE app PASSWORD …` | `psql "host=… user=app"` 접속 성공 | 🔴 **기준이 Secrets Manager** — 0장 표 |
+| 2 | **`app` 역할 비밀번호를 시크릿 값으로** | 아래 2.1 (🔴 값은 **stdin** 으로만) | `psql "host=… user=app"` 접속 성공 | 🔴 **기준은 A** — 0.1 |
 | 3 | **PushSecret 강제 동기화** | `kubectl annotate pushsecret -n aquasentinel-db api-module-database force-sync=$(date +%s) --overwrite` | Synced · 갱신 시각이 지금 | 🔸 **②③ 깨우기(1부 6단계) 뒤에만** 존재 — 1부 순서가 이미 그렇습니다 |
 | 4 | **그 값을 읽는 ExternalSecret 전부 강제 동기화** | `kubectl get externalsecret -A` 에서 DB `app` 키를 읽는 것에 `force-sync` 주석 | 각 `status.refreshTime` 이 3번 뒤 | ✅ 방식 같음 — 읽는 키만 `dr-tokyo-*` |
 | 5 | **`keycloak` · `grafana_ro` 역할 재적용** | `keycloak-db-password` · `grafana-db-ro-password` 시크릿에 **아무 주석이나** 달아 변경을 일으킴 | `kubectl get databaserole -n aquasentinel-db` → `applied=true` · `secretResourceVersion` 바뀜 | ✅ **그대로** — 역할·시크릿 이름이 양 리전 같습니다 |
@@ -55,6 +93,25 @@ CNPG 는 recovery 부트스트랩 때 `app` 역할 비밀번호를 **바꾸지 �
 | 8 | 처리 상태 확인 | 처리 누락 대조 · 큐 적체 | 누락 0 · 적체 0 | ✅ 그대로 |
 
 🔴 **2 → 3 → 4 를 이어서 합니다.** ExternalSecret 갱신 주기가 **1시간**이라 강제 동기화를 빼면 최대 1시간 동안 옛 값입니다. **6번은 4번이 끝난 뒤**입니다.
+
+### 2.1 2번 명령 — 🔴 값이 `ps` 에 안 보이게
+
+```bash
+# 기준값 A 를 변수로만 읽고, SQL 은 stdin 으로 넘깁니다(argv 는 ps 에 보입니다)
+A=$(kubectl --context "$TOKYO" -n aquasentinel-db get secret aquasentinel-pg-app \
+      -o jsonpath='{.data.password}' | base64 -d)
+ESC=$(printf '%s' "$A" | sed "s/'/''/g")        # SQL 리터럴 이스케이프
+printf "ALTER ROLE app PASSWORD '%s';\n" "$ESC" \
+ | kubectl --context "$TOKYO" -n aquasentinel-db exec -i aquasentinel-pg-1 -c postgres -- \
+   psql -U postgres -q -v ON_ERROR_STOP=1
+
+# 바로 검증 — 값은 stdin 으로만 넘깁니다
+printf '%s' "$A" | kubectl --context "$TOKYO" -n aquasentinel-db exec -i aquasentinel-pg-1 -c postgres -- \
+  sh -c 'read -r P; PGPASSWORD="$P" psql -h 127.0.0.1 -U app -d app -tAc "SELECT current_user, pg_is_in_recovery();"'
+# 🔴 기대: app|f   (f = 승격된 Primary)
+```
+
+🔸 10/28 리허설에서 이 두 명령으로 통과했습니다 `[사실]`. 🔴 **`ALTER ROLE` 은 Primary 에서만 됩니다** — 5단계 승격이 끝난 뒤여야 합니다.
 
 ---
 
@@ -80,6 +137,25 @@ kubectl rollout restart deploy/alert-worker -n web
 🔸 **Keycloak 은 인증 실패가 실제로 보일 때만** 재시작합니다.
 
 🔴 **한꺼번에 하지 않습니다** — 파드가 몰리면 온디맨드 자리 계산이 밀려 카펜터 `general` 노드가 1대 뜹니다. **api-module → web → 나머지** 묶음으로 나눕니다.
+
+🔴🔴 **함정 — Rollout 이 Degraded 면 `restartAt` 이 파드를 바꾸지 않습니다** `[2026-10-28 리허설 실측]`
+
+```
+$ kubectl -n web get rollout web-backend -o jsonpath='{.spec.restartAt} {.status.phase} {.status.message}'
+2026-10-28T07:00:04Z  Degraded  ProgressDeadlineExceeded: ReplicaSet "web-backend-7fc4694c74" has timed out progressing.
+```
+
+`restartAt` 은 **걸려 있는데** 파드가 21분째 그대로였습니다. 같은 명령으로 `web-frontend`·`alert-worker` 는 정상 재시작됐습니다 — **Degraded 인 Rollout 만** 안 바뀝니다. 비밀번호가 안 맞아 `/readyz` 가 실패하면 Rollout 이 바로 그 Degraded 상태이므로, **이 단계에서 거의 항상 걸립니다.**
+
+**대처 — 파드를 직접 지웁니다**(ReplicaSet 이 새 시크릿으로 다시 만듭니다):
+
+```bash
+# 🔴 라벨이 아니라 이름으로 지웁니다 — app.kubernetes.io/name 라벨이 없습니다(10/28 확인)
+kubectl --context "$TOKYO" -n web get pods --no-headers | awk '/^web-backend/{print $1}' \
+ | xargs -r kubectl --context "$TOKYO" -n web delete pod
+```
+
+🔸 10/28 엔 삭제 **53초** 뒤 `web-backend` 2파드가 `1/1` 이 되고 PG 인증 실패가 **30건/분 → 0** 이 됐습니다.
 
 ---
 
