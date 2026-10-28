@@ -614,7 +614,7 @@ terraform state list | wc -l    # 🔴 0 이어야 합니다
 | **EBS** `*-dynamic-pvc-*` (리허설 때 **6개 · 60 GiB**) | **EBS CSI**(PVC 보고) | 🔴 **예** | 아니오 |
 | **SG** `k8s-ingress-aquasent-*` · `k8s-traffic-*` | **LBC** | 아니오 | 🔴 **예** |
 
-🔸 증상은 **`1-network` destroy 가 서브넷·IGW·VPC 에서 멈추는 것**입니다. 10/28 엔 VPC 하나에 7분 31초 걸렸습니다.
+🔴🔴 **증상은 `1-network` destroy 가 VPC 에서 끝나지 않는 것입니다 — 기다려도 안 끝납니다.** 10/28 2회차 실측: `Still destroying... [13m30s elapsed]` 까지 **계속 재시도만** 했고, ENI 도 서브넷도 이미 0이었습니다. 남아 있던 것은 **SG 2개**(`k8s-ingress-aquasent-*` · `k8s-traffic-*`)뿐이었고, **그 둘을 지우자 4초 만에 끝났습니다.** 🔸 1회차에는 7분 31초로 끝나 「느릴 뿐」로 보였는데, 2회차에서 **끝나지 않는다**는 것이 드러났습니다. 🔴 **VPC 가 5분 넘게 `Still destroying` 이면 기다리지 말고 아래 ④(SG)부터 돌리십시오.**
 
 ```bash
 export AWS_PAGER=""
@@ -630,11 +630,18 @@ until [ "$(aws elbv2 describe-load-balancers --region $R --query 'length(LoadBal
 for tg in $(aws elbv2 describe-target-groups --region $R --query 'TargetGroups[].TargetGroupArn' --output text); do
   aws elbv2 delete-target-group --region $R --target-group-arn "$tg"
 done
-# ③ 고아 EBS (🔴 available 인 것만 — in-use 는 러너 루트 볼륨입니다)
-for v in $(aws ec2 describe-volumes --region $R --filters Name=status,Values=available \
-           --query 'Volumes[].VolumeId' --output text); do
-  aws ec2 delete-volume --region $R --volume-id "$v"
-done
+# ③ 고아 EBS — 🔴 **이름표까지 보고 좁힙니다**
+#    `available` 만으로 거르면 **러너가 꺼져 있을 때 그 루트 볼륨까지 지웁니다.**
+#    지울 것은 EBS CSI 가 PVC 보고 만든 `aquasentinel-dr-apne1-eks-dynamic-pvc-*` 뿐입니다.
+aws ec2 describe-volumes --region $R --filters Name=status,Values=available \
+  --query "Volumes[?Tags[?Key=='Name' && starts_with(Value,'aquasentinel-dr-apne1-eks')]].VolumeId" \
+  --output text | tr '\t' '\n' | while read -r v; do
+    [ -z "$v" ] && continue
+    aws ec2 delete-volume --region $R --volume-id "$v" && echo "  deleted $v"
+  done
+# 🔸 `--output text` 는 **탭 한 줄**로 내려옵니다. `V=$(...)` 에 담아 `for v in $V` 로 돌리면
+#    zsh(맥 기본 셸)는 **단어를 안 쪼개** ID 하나로 넘겨 `is malformed` 로 실패합니다(10/28 실제).
+#    위처럼 `tr '\t' '\n' | while read` 를 쓰면 셸에 상관없이 됩니다.
 # ④ LBC 고아 SG — 서로 참조하므로 규칙을 먼저 비웁니다
 for sg in $(aws ec2 describe-security-groups --region $R \
             --query "SecurityGroups[?starts_with(GroupName,'k8s-')].GroupId" --output text); do
