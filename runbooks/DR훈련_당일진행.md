@@ -20,7 +20,7 @@
 
 | | 무엇 | 누구 | 없으면 |
 |---|---|---|---|
-| ① | **1부 날짜 확정** | C(재희) | 시작 못 함 |
+| ① | ✅ ~~**1부 날짜 확정**~~ — **2026-10-29 16:36 닫음**: **10/30(금) 09:00 KST**. B 가 사전등록 5판 9장 3번에서 「확정」으로 닫았습니다(표기 근거 「2026-10-29 팀 구두 합의」 · 날짜 근거는 A 의 D-26 사전통보). 🔸 C 의 문서상 확정 문장은 없습니다 | C(재희) · 확정 주체 B | — |
 | ② | ✅ ~~CNPG 승격 절차~~ — **2026-10-28 닫음**(`promote_tokyo_db` 변수 신설). 🟢 **리허설에서 2회 실제로 돌았습니다** — `pg_is_in_recovery()` **t→f 28초**(두 번 같음) · `transaction_read_only=off` · `CREATE TABLE`+`INSERT` 성공 · 🔴 **Argo `selfHeal` 되돌림 없음** `[2026-10-28 실측]`. 🔴 **그러니 지금 남은 위험은 「승격이 되는가」가 아닙니다 — `promote_tokyo_db` 가 끈적하지 않은 것입니다.** 5단계 **이후** `3-gitops` 를 건드리는 **모든** apply(6단계 · 2부 재적용 · destroy)에 `-var promote_tokyo_db=true` 를 붙이십시오 — 빠뜨리면 승격이 조용히 풀리고 **증상이 비밀번호 불일치 CrashLoop 과 구별되지 않습니다**(아래 ② · 3장) | A | — |
 | ③ | **데드맨 체크 계정**(11-2 `up` 확인 · 뒷정리 #0 Pause) | C | 11-2 못 함 · 🔴 뒷정리 때 **오경보** |
 | ④ | **화면 확인**(11-3) | B(창영) | 「사람이 쓸 수 있다」 증거 없음 |
@@ -55,13 +55,24 @@ for b in aquasentinel-dev-observability-379937169195 aquasentinel-dr-tokyo-obser
   echo -n "$b : "; aws s3 ls "s3://$b/cloudnativepg-tokyo/" --recursive 2>/dev/null | wc -l
 done
 
+# 🔴 tfstate 리전 복제 — 「서울이 없다」 가정이 성립하는 조건. 두 수가 같아야 함
+aws s3api list-objects-v2 --bucket aquasentinel-tfstate-379937169195 \
+  --region ap-northeast-2 --query 'length(Contents)' --output text
+aws s3api list-objects-v2 --bucket aquasentinel-tfstate-replica-379937169195 \
+  --region ap-northeast-1 --query 'length(Contents)' --output text
+
+# 🔴 dr-drill PRIMARY 가 있어야 8단계 SECONDARY 추가가 의미를 가짐
+aws route53 list-resource-record-sets --hosted-zone-id Z04047191I2SWBLU7U7D \
+  --query "ResourceRecordSets[?starts_with(Name,'dr-drill')].[Failover,HealthCheckId]" --output text
+# PRIMARY 한 줄 + 드릴 헬스체크 id 가 나와야 합니다. SECONDARY 는 0 이어야 합니다
+
 # 서울이 멀쩡한가 (훈련 내내 비교 기준)
 kubectl -n argocd get applications --no-headers | awk '{print $2"/"$3}' | sort | uniq -c
 kubectl get pods -A --no-headers | grep -vE "Completed|Succeeded" \
   | awk '{split($3,a,"/"); if ($4!="Running" || a[1]!=a[2]) print $1,$2,$3,$4}'
 ```
 
-**2026-10-28 13:11 KST 실측 — 시작 가능 상태** `[사실]`
+**2026-10-29 18:3x KST 재실측 — 시작 가능 상태 유지** `[사실]` (아래 표는 10/28 13:11 값에 10/29 재확인을 더한 것)
 
 | 확인 | 값 |
 |---|---|
@@ -71,7 +82,11 @@ kubectl get pods -A --no-headers | grep -vE "Completed|Succeeded" \
 | 🔴 `cloudnativepg/`(서울 백업 복제본 — **지우면 안 됨**) | **4,367 · 4,367** ✅ |
 | 서울 Argo | **41/41** Synced/Healthy ✅ |
 | 서울 비정상 파드 | **0**(살아 있는 82개 중) ✅ |
-| 🔴 도쿄 러너 EC2 `i-0a6ffc9fe8534f93c` | **running** — GitLab 쪽 **Paused** 인지 화면 확인 필요 |
+| 🔴 도쿄 러너 EC2 `i-0a6ffc9fe8534f93c` | **running** · 🟢 **GitLab `#57937986` Online + Paused 화면 확인 완료**(10/29) |
+| 🟢 **10/29 18:3x 재실측** | 도쿄 EKS · 비기본 VPC · 피어링(양 리전) **0 · 0 · 0 · 0** · ACM **1** · 시크릿 **18** · ECR **10** · `cloudnativepg-tokyo/` **0 · 0** · `cloudnativepg/` **4,722 · 4,722**(10/28 4,367 → 백업이 쌓인 것) · 서울 Argo **41/41** · 서울 비정상 파드 **0**(살아 있는 82개) |
+| 🟢 **tfstate 복제** | 서울 **32** / 도쿄 **32** — 같음 |
+| 🟢 **운영 도메인 · 헬스체크** | apex **200** · `auth.` **302** · `grafana.` **302** · 헬스체크 3개 모두 `Inverted=false` · `HealthCheckVersion=1`(= 아무도 안 건드렸음) |
+| 🟢 **`dr-drill.`** | PRIMARY 1줄(서울 ALB · 드릴 헬스체크) · SECONDARY **0** — 8단계 전 정상 상태 |
 
 ### 0.4 셸 준비
 
