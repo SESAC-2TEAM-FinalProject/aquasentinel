@@ -1258,6 +1258,9 @@ locals {
             user: $GRAFANA_PG_RO_USER
             access: proxy
             jsonData:
+              # Grafana 12 의 PostgreSQL 플러그인은 jsonData.database 만 읽는다 — 위 database 만 있으면
+              # 패널에서 "default database 없음" 으로 쿼리가 아예 나가지 않는다(2026-10-29 운영 확인)
+              database: app
               sslmode: require
               postgresVersion: 1700
             secureJsonData:
