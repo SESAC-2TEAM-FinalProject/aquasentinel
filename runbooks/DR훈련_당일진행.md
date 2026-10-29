@@ -547,7 +547,7 @@ done
 
 | # | 지울 것 | 확인 |
 |---|---|---|
-| **0** | 🔴🔴 **데드맨 체크 Pause — C 에게 먼저 연락** | **destroy 보다 먼저.** 도쿄를 내리면 핑이 끊겨 **유예 5분 뒤 오경보** |
+| **0** | 🔴🔴 **데드맨 체크 Pause — C 에게 먼저 연락** | **destroy 보다 먼저.** 도쿄를 내리면 핑이 끊겨 **유예 5분 뒤 오경보** · 🔴 **Pause 단독으로는 안 됩니다 — 아래 3.0** |
 | 1 | 도쿄 `rebuild/*` **전량 destroy** | EKS·ALB·NAT·EC2·EBS·EIP·Redis·VPC **전부 0**. 🔴 `4-edge` 도 여기 포함 |
 | 2 | 피어링 + 양쪽 라우트 — `5-peering` **destroy 한 번** | 양 리전 피어링 **0** · 라우트에 상대 CIDR 없음 *(1부 뒤엔 해당 없음)* |
 | 3 | 서울 내부 NLB — gitops `kustomization.yaml` **한 줄 삭제** | 서울 NLB **0**. LBC 가 SG 까지 같이 지웁니다 *(1부 뒤엔 해당 없음)* |
@@ -559,6 +559,20 @@ done
 | 9 | 기본 컨텍스트 | `kubectl config use-context $SEOUL` · 🔸 `dr-tokyo` 컨텍스트 항목도 삭제 |
 
 🔴 **6-1 지울 때 접두사를 눈으로 확인하십시오** — `cloudnativepg/`(끝에 `-tokyo` 없음)는 **서울 백업의 복제본이자 DR 자산**(지금 4,413개)이라 지우면 **리전 장애 때 복구가 불가능**해집니다. 🔸 판별은 **접두사 이름이 아니라 `ReplicationStatus`** 로 합니다 — 아래 3.2.
+
+### 3.0 🔴🔴 #0 — Pause 만 걸면 1분 안에 저절로 풀립니다 `[scripts/alerting/README.md:12 · 20 · 63]`
+
+도쿄 체크는 「Ignore pings while paused」가 **꺼져** 있어, **일시정지된 체크가 핑을 받으면 바로 다시 감시로 돌아갑니다.** destroy 직전에는 Alertmanager 가 아직 살아서 Watchdog 을 **1분마다** 보냅니다. 그래서 순서가 이렇게 흐릅니다.
+
+> Pause → **다음 핑에 해제** → destroy 로 Alertmanager 소멸 → **유예 5분 뒤 `#regiondr-tokyo` 에 down 알림**
+
+즉 #0 이 막으려던 오경보가 그대로 납니다. README 가 적은 순서는 **⑴ Silence 를 먼저(Watchdog 까지 포함) → ⑵ Watchdog 이 Silence 된 것 확인 → ⑶ 그다음 Pause** 이고, `scripts/alerting/maintenance.sh start` 가 이 순서를 보장합니다.
+
+- 🔸 Silence 기간은 **teardown 전체**(`2-cluster` destroy 끝까지)를 덮어야 합니다 — 그 전에 만료되면 Alertmanager 가 살아 있는 채로 핑이 재개돼 체크가 풀리고, 곧이어 같은 오경보가 납니다. 10/28 리허설 뒷정리는 **49분**이었습니다.
+- 🔸 **수단은 C 와 맞추십시오** — 알람 파이프라인은 C 영역이고 `maintenance.sh` 는 `HC_API_KEY`(읽기·쓰기)와 Alertmanager exec 가 필요합니다.
+- 🔴 **1부 뒤 · 2부 뒤 각각** 해당합니다.
+
+🟢 **거꾸로, 2부 0단계 뒤에는 되살리는 조작이 필요 없습니다** — 도쿄를 다시 세우면 새 Alertmanager 의 첫 Watchdog 핑으로 체크가 **자동 재개**됩니다. 확인만 합니다: `3-gitops` apply 후 **15분이 지나도 `paused`** 면 `maintenance.sh stop` `[README:72]`.
 
 ### 3.1 🔴🔴 `3-gitops` destroy 가 네임스페이스에서 멈춥니다 `[2026-10-28 리허설 실측]`
 
