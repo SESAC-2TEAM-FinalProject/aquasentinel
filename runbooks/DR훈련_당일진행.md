@@ -20,8 +20,8 @@
 
 | | 무엇 | 누구 | 없으면 |
 |---|---|---|---|
-| ① | **1부 날짜 확정** | C(재희) | 시작 못 함 |
-| ② | ✅ ~~CNPG 승격 절차~~ — **2026-10-28 닫음**(`promote_tokyo_db` 변수 신설). 🔴 **부록 A 를 5단계 전에 읽으십시오** — 아직 실제로 돌려 본 적이 없습니다 | A | — |
+| ① | ✅ ~~**1부 날짜 확정**~~ — **2026-10-29 16:36 닫음**: **10/30(금) 09:00 KST**. B 가 사전등록 5판 9장 3번에서 「확정」으로 닫았습니다(표기 근거 「2026-10-29 팀 구두 합의」 · 날짜 근거는 A 의 D-26 사전통보). 🔸 C 의 문서상 확정 문장은 없습니다 | C(재희) · 확정 주체 B | — |
+| ② | ✅ ~~CNPG 승격 절차~~ — **2026-10-28 닫음**(`promote_tokyo_db` 변수 신설). 🟢 **리허설에서 2회 실제로 돌았습니다** — `pg_is_in_recovery()` **t→f 28초**(두 번 같음) · `transaction_read_only=off` · `CREATE TABLE`+`INSERT` 성공 · 🔴 **Argo `selfHeal` 되돌림 없음** `[2026-10-28 실측]`. 🔴 **그러니 지금 남은 위험은 「승격이 되는가」가 아닙니다 — `promote_tokyo_db` 가 끈적하지 않은 것입니다.** 5단계 **이후** `3-gitops` 를 건드리는 **모든** apply(6단계 · 2부 재적용 · destroy)에 `-var promote_tokyo_db=true` 를 붙이십시오 — 빠뜨리면 승격이 조용히 풀리고 **증상이 비밀번호 불일치 CrashLoop 과 구별되지 않습니다**(아래 ② · 3장) | A | — |
 | ③ | **데드맨 체크 계정**(11-2 `up` 확인 · 뒷정리 #0 Pause) | C | 11-2 못 함 · 🔴 뒷정리 때 **오경보** |
 | ④ | **화면 확인**(11-3) | B(창영) | 「사람이 쓸 수 있다」 증거 없음 |
 | ⑤ | 🔴 **(가-2) 토큰** — 운영 주소 로그인 토큰 · **7단계 직전에** 받습니다(만료 30분) | B(창영) | **RTO 끝을 못 찍음** |
@@ -55,13 +55,24 @@ for b in aquasentinel-dev-observability-379937169195 aquasentinel-dr-tokyo-obser
   echo -n "$b : "; aws s3 ls "s3://$b/cloudnativepg-tokyo/" --recursive 2>/dev/null | wc -l
 done
 
+# 🔴 tfstate 리전 복제 — 「서울이 없다」 가정이 성립하는 조건. 두 수가 같아야 함
+aws s3api list-objects-v2 --bucket aquasentinel-tfstate-379937169195 \
+  --region ap-northeast-2 --query 'length(Contents)' --output text
+aws s3api list-objects-v2 --bucket aquasentinel-tfstate-replica-379937169195 \
+  --region ap-northeast-1 --query 'length(Contents)' --output text
+
+# 🔴 dr-drill PRIMARY 가 있어야 8단계 SECONDARY 추가가 의미를 가짐
+aws route53 list-resource-record-sets --hosted-zone-id Z04047191I2SWBLU7U7D \
+  --query "ResourceRecordSets[?starts_with(Name,'dr-drill')].[Failover,HealthCheckId]" --output text
+# PRIMARY 한 줄 + 드릴 헬스체크 id 가 나와야 합니다. SECONDARY 는 0 이어야 합니다
+
 # 서울이 멀쩡한가 (훈련 내내 비교 기준)
 kubectl -n argocd get applications --no-headers | awk '{print $2"/"$3}' | sort | uniq -c
 kubectl get pods -A --no-headers | grep -vE "Completed|Succeeded" \
   | awk '{split($3,a,"/"); if ($4!="Running" || a[1]!=a[2]) print $1,$2,$3,$4}'
 ```
 
-**2026-10-28 13:11 KST 실측 — 시작 가능 상태** `[사실]`
+**2026-10-29 18:3x KST 재실측 — 시작 가능 상태 유지** `[사실]` (아래 표는 10/28 13:11 값에 10/29 재확인을 더한 것)
 
 | 확인 | 값 |
 |---|---|
@@ -71,7 +82,11 @@ kubectl get pods -A --no-headers | grep -vE "Completed|Succeeded" \
 | 🔴 `cloudnativepg/`(서울 백업 복제본 — **지우면 안 됨**) | **4,367 · 4,367** ✅ |
 | 서울 Argo | **41/41** Synced/Healthy ✅ |
 | 서울 비정상 파드 | **0**(살아 있는 82개 중) ✅ |
-| 🔴 도쿄 러너 EC2 `i-0a6ffc9fe8534f93c` | **running** — GitLab 쪽 **Paused** 인지 화면 확인 필요 |
+| 🔴 도쿄 러너 EC2 `i-0a6ffc9fe8534f93c` | **running** · 🟢 **GitLab `#57937986` Online + Paused 화면 확인 완료**(10/29) |
+| 🟢 **10/29 18:3x 재실측** | 도쿄 EKS · 비기본 VPC · 피어링(양 리전) **0 · 0 · 0 · 0** · ACM **1** · 시크릿 **18** · ECR **10** · `cloudnativepg-tokyo/` **0 · 0** · `cloudnativepg/` **4,722 · 4,722**(10/28 4,367 → 백업이 쌓인 것) · 서울 Argo **41/41** · 서울 비정상 파드 **0**(살아 있는 82개) |
+| 🟢 **tfstate 복제** | 서울 **32** / 도쿄 **32** — 같음 |
+| 🟢 **운영 도메인 · 헬스체크** | apex **200** · `auth.` **302** · `grafana.` **302** · 헬스체크 3개 모두 `Inverted=false` · `HealthCheckVersion=1`(= 아무도 안 건드렸음) |
+| 🟢 **`dr-drill.`** | PRIMARY 1줄(서울 ALB · 드릴 헬스체크) · SECONDARY **0** — 8단계 전 정상 상태 |
 
 ### 0.4 셸 준비
 
@@ -547,7 +562,7 @@ done
 
 | # | 지울 것 | 확인 |
 |---|---|---|
-| **0** | 🔴🔴 **데드맨 체크 Pause — C 에게 먼저 연락** | **destroy 보다 먼저.** 도쿄를 내리면 핑이 끊겨 **유예 5분 뒤 오경보** |
+| **0** | 🔴🔴 **데드맨 체크 Pause — C 에게 먼저 연락** | **destroy 보다 먼저.** 도쿄를 내리면 핑이 끊겨 **유예 5분 뒤 오경보** · 🔴 **Pause 단독으로는 안 됩니다 — 아래 3.0** |
 | 1 | 도쿄 `rebuild/*` **전량 destroy** | EKS·ALB·NAT·EC2·EBS·EIP·Redis·VPC **전부 0**. 🔴 `4-edge` 도 여기 포함 |
 | 2 | 피어링 + 양쪽 라우트 — `5-peering` **destroy 한 번** | 양 리전 피어링 **0** · 라우트에 상대 CIDR 없음 *(1부 뒤엔 해당 없음)* |
 | 3 | 서울 내부 NLB — gitops `kustomization.yaml` **한 줄 삭제** | 서울 NLB **0**. LBC 가 SG 까지 같이 지웁니다 *(1부 뒤엔 해당 없음)* |
@@ -559,6 +574,20 @@ done
 | 9 | 기본 컨텍스트 | `kubectl config use-context $SEOUL` · 🔸 `dr-tokyo` 컨텍스트 항목도 삭제 |
 
 🔴 **6-1 지울 때 접두사를 눈으로 확인하십시오** — `cloudnativepg/`(끝에 `-tokyo` 없음)는 **서울 백업의 복제본이자 DR 자산**(지금 4,413개)이라 지우면 **리전 장애 때 복구가 불가능**해집니다. 🔸 판별은 **접두사 이름이 아니라 `ReplicationStatus`** 로 합니다 — 아래 3.2.
+
+### 3.0 🔴🔴 #0 — Pause 만 걸면 1분 안에 저절로 풀립니다 `[scripts/alerting/README.md:12 · 20 · 63]`
+
+도쿄 체크는 「Ignore pings while paused」가 **꺼져** 있어, **일시정지된 체크가 핑을 받으면 바로 다시 감시로 돌아갑니다.** destroy 직전에는 Alertmanager 가 아직 살아서 Watchdog 을 **1분마다** 보냅니다. 그래서 순서가 이렇게 흐릅니다.
+
+> Pause → **다음 핑에 해제** → destroy 로 Alertmanager 소멸 → **유예 5분 뒤 `#regiondr-tokyo` 에 down 알림**
+
+즉 #0 이 막으려던 오경보가 그대로 납니다. README 가 적은 순서는 **⑴ Silence 를 먼저(Watchdog 까지 포함) → ⑵ Watchdog 이 Silence 된 것 확인 → ⑶ 그다음 Pause** 이고, `scripts/alerting/maintenance.sh start` 가 이 순서를 보장합니다.
+
+- 🔸 Silence 기간은 **teardown 전체**(`2-cluster` destroy 끝까지)를 덮어야 합니다 — 그 전에 만료되면 Alertmanager 가 살아 있는 채로 핑이 재개돼 체크가 풀리고, 곧이어 같은 오경보가 납니다. 10/28 리허설 뒷정리는 **49분**이었습니다.
+- 🔸 **수단은 C 와 맞추십시오** — 알람 파이프라인은 C 영역이고 `maintenance.sh` 는 `HC_API_KEY`(읽기·쓰기)와 Alertmanager exec 가 필요합니다.
+- 🔴 **1부 뒤 · 2부 뒤 각각** 해당합니다.
+
+🟢 **거꾸로, 2부 0단계 뒤에는 되살리는 조작이 필요 없습니다** — 도쿄를 다시 세우면 새 Alertmanager 의 첫 Watchdog 핑으로 체크가 **자동 재개**됩니다. 확인만 합니다: `3-gitops` apply 후 **15분이 지나도 `paused`** 면 `maintenance.sh stop` `[README:72]`.
 
 ### 3.1 🔴🔴 `3-gitops` destroy 가 네임스페이스에서 멈춥니다 `[2026-10-28 리허설 실측]`
 
