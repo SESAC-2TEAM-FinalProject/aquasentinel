@@ -272,6 +272,31 @@ resource "aws_s3_bucket_replication_configuration" "this" {
     destination {
       bucket        = each.value.replication_destination_bucket_arn
       storage_class = "STANDARD"
+
+      # 복제 지연을 실제로 재기 위한 CloudWatch 지표(ReplicationLatency ·
+      # BytesPendingReplication · OperationsPendingReplication ·
+      # OperationsFailedReplication). C 요청 2026-10-30.
+      #
+      # 왜 필요한가: Stage 0 은 서울 WAL 을 S3 경유로 도쿄에 보내므로 도쿄가
+      # 잃을 수 있는 양의 상한이 「archive_timeout 5분 + 업로드 + **이 복제 지연**
+      # + wal_retrieve_retry_interval 5초」다. 복제가 늦어지거나 끊겨도 서울 쪽
+      # 경보(CnpgWalArchivingStale)는 업로드만 보기 때문에 정상으로 보이고,
+      # 도쿄 버킷만 조용히 낡아 간다 — RPO 가 아무도 모르게 커지는 자리였다.
+      #
+      # 🔴 RTC(replication_time)는 켜지 않는다 — 유료 시간 보장 기능이고
+      # 지금 필요한 것은 측정뿐이다.
+      #
+      # 🔴🔴 그래서 event_threshold 도 쓸 수 없다 `[2026-10-30 실측]`.
+      # terraform validate 와 plan 은 통과하지만(provider 5.100.0 스키마가
+      # 허용) S3 API 가 apply 에서 400 으로 거부한다:
+      #   InvalidArgument: Metrics cannot contain an event threshold
+      #                    when ReplicationTime is not specified or Disabled
+      # 즉 event_threshold 는 RTC 를 켠 경우에만 유효하다. 지연 경계는
+      # CloudWatch 경보(ReplicationLatency 임계)로 잡는다 — 그쪽은 RTC 가
+      # 필요 없다.
+      metrics {
+        status = "Enabled"
+      }
     }
   }
 }
