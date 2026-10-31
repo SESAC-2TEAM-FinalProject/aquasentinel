@@ -281,9 +281,12 @@ resource "aws_launch_template" "runner" {
 }
 
 resource "aws_autoscaling_group" "runner" {
-  name                = "${local.name_prefix}-gitlab-runner-tokyo"
-  desired_capacity    = 1
-  min_size            = 1
+  name = "${local.name_prefix}-gitlab-runner-tokyo"
+
+  # 🔴 평소 0 — 이 러너는 DR 훈련·재해 때만 쓴다(variables.tf 의 설명).
+  #   깨울 때는 -var runner_desired_capacity=1 로 apply 한다.
+  desired_capacity    = var.runner_desired_capacity
+  min_size            = var.runner_desired_capacity
   max_size            = 1
   vpc_zone_identifier = data.aws_subnets.public.ids
   health_check_type   = "EC2"
