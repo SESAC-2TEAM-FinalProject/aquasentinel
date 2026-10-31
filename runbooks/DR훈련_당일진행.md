@@ -29,6 +29,21 @@
 
 🔴 **셋이 약 6시간(5시간 29분 ~ 6시간 35분) 붙어 있어야 합니다.** 09:00 시작 권고.
 
+🔴🔴 **긴 중단(점심 · 회의 · 자리 비움)이 걸리면 안 되는 구간이 있습니다**
+
+| 구간 | 왜 |
+|---|---|
+| **4단계 `3-gitops`** | 1순위 측정 — 끊으면 값을 버립니다 |
+| **5 ~ 11단계**(승격 → 비밀번호 → `4-edge` → RTO 끝) | 🔴 **RTO 측정 구간. 여기서 1시간 쉬면 RTO 가 1시간 늘어납니다** |
+| **12단계 뒷정리** | `destroy` 중간에 멈추면 `monitoring` 네임스페이스 Terminating 함정(3.1)을 들고 쉬게 됩니다. 시작했으면 끝냅니다 |
+| **2부 1 ~ 4단계** | 🔴 **RPO 측정 구간.** 끊어 놓고 쉬면 측정이 뜻을 잃습니다 |
+| **2부 5 ~ 8단계** | 2부 RTO 측정 구간 |
+
+🟢 **쉬어도 되는 곳은 「1부 종료 판정 뒤」 하나뿐입니다** — 도쿄가 0 이고 서울만 도는 상태라 과금도 측정도 걸리지 않습니다. 긴 중단이 예정돼 있으면 **거기에 맞춥니다.**
+🔴 **중단 앞에서 2부 재구축을 시작하지 않습니다** — `2-cluster` 까지 만들어 두면 끝이 당겨지지만 **EKS · NAT 가 그동안 유휴로 과금**되고, **중단된 재구축 상태를 들고 쉬게** 됩니다.
+
+🔸 **그날의 시각표(시작 시각 · 중단 시간대 · 단계별 예상 시각)는 런북이 갖지 않습니다** — 회차마다 다르므로 그 회차 진행표에 둡니다. 2026-10-30 회차는 `docs/DR훈련_당일진행표_20261030.md`.
+
 ### 0.2 날짜가 피해야 하는 것
 
 | | |
@@ -105,6 +120,28 @@ mkdir -p "$DRILL_DIR" && cd "$DRILL_DIR" && echo "$DRILL_DIR"
 
 🔴 **모든 단계 앞뒤에 `date -u +%FT%TZ` 를 찍습니다.** 시각은 추정하지 않습니다.
 
+### 0.5 🔴🔴 로그를 판정하는 법 — **색코드를 먼저 벗깁니다** `[2026-10-30 발견 2부-13]`
+
+Terraform 출력에는 ANSI 색코드가 `│` 와 `Error:` **사이에** 끼어 있습니다. 그래서 그냥 세면 **에러가 있어도 0 이 나옵니다.**
+
+```bash
+# 🔴 이렇게 세면 틀립니다
+grep -c '│ Error:' apply.log          # ← 색코드가 끼면 0
+
+# 🟢 이렇게 셉니다
+sed 's/\x1b\[[0-9;]*m//g' apply.log | grep -c '│ Error:'
+sed 's/\x1b\[[0-9;]*m//g' apply.log | grep -n '│ Error:' | head
+```
+
+| 함정 | 왜 |
+|---|---|
+| `grep '^Error:'` | Terraform 은 `│ Error:` 로 들여씁니다 — `^` 가 안 맞습니다 |
+| 🔴 `grep -c '│ Error:'` | `│` 와 `Error:` 사이에 **색코드**가 있어 0 을 냅니다 |
+| 🔴 **exit code 만 보기** | Terraform ↔ Argo 필드 매니저 충돌은 **exit 1 이어도 변경이 적용**됩니다. 둘 다 봅니다 |
+
+🔴 **신호는 「exit code 와 에러 수가 서로 안 맞는 것」입니다.** `exit 0` 인데 에러가 세어지거나, `exit 1` 인데 0 이면 **세는 방법을 먼저 의심합니다.**
+🔸 2026-10-30 훈련 로그 14개를 색코드를 벗기고 다시 세니 **4개에 숨은 에러**가 있었습니다(409 함정 1건 · 필드 매니저 충돌 3건). 🟢 **전부 이미 문서에 적고 복구한 것들이고, 틀린 것은 「개수」뿐이었습니다.**
+
 ---
 
 ## 1. 1부 — Stage 0 (도쿄 전량 세우기)
@@ -120,16 +157,18 @@ mkdir -p "$DRILL_DIR" && cd "$DRILL_DIR" && echo "$DRILL_DIR"
 | 3 | `2-cluster` apply · 🔴 **409 함정** | 아래 **①-가** | **19분** `[사실]` · 🔸 리허설 **19분 29초**(함정 대응 포함) | EKS Active · 노드 **3/3** · Redis available | ⟨ ⟩ |
 | **4** | 🔴 **`3-gitops` apply — 1순위 측정 · 🔴 `plan` 불가** | 아래 **①-나** · 막히면 `WAL아카이빙` | 🔸 리허설 **16분 42초**(Terraform 4:46 + Argo 수렴 11분) · 상한 48분 | 🔴 **LBC CA 일치 확인**(아래 ①-나 함정) · 🔴 Argo **39/40**(`keycloak` 만 Degraded = standby 정상) · CNPG **3/3** | ⟨ ⟩ |
 | **5** | 🔴 **① CNPG 승격** — **못 되돌림 · 사람 판단** | 🔴 **부록 A** | 🔸 리허설 **1분 27초**(`f` 전환은 **28초**) | `pg_is_in_recovery()` = **f** · `transaction_read_only=off` | ⟨ ⟩ |
-| 6 | **②③ 깨우기** · 🔴🔴 **플래그 2개** | 아래 ② | 🔸 리허설 Terraform 18초 + Keycloak 기동 **약 2분** + 가공·판정 깨어남 **72초** | Keycloak `instances:1`·파드 Ready · 🔴 **Rollout 4개 `replicas>0` · ScaledObject 4개**(🟢 10/28 수정 후 72초에 자동 — 아래 ②) · 🔴 수집기는 멈춘 채 | ⟨ ⟩ |
+| 6 | **②③ 깨우기** · 🔴🔴 **플래그 2개** | 아래 ② | 🔸 리허설 Terraform 18초 + Keycloak 기동 **약 2분** + 가공·판정 깨어남 **72초** | Keycloak `instances:1`·파드 Ready · 🔴 **Rollout 4개 `replicas>0` · ScaledObject 5개**(🟢 10/28 수정 후 72초에 자동 — 아래 ②) 🔴 **`-A` 로 셉니다 — `api-module` 4 + `web/web-backend` 1 = 5** `[2026-10-30 발견 1부-6]` · 🔴 수집기는 멈춘 채 | ⟨ ⟩ |
 | 7 | 🔴 **④ 비밀번호 맞추기** | **`DB다시부트스트랩`** + 🔴 **아래 ②-1** | 🔸 리허설 7분 44초 · 🔴 **10/28 실측 15분 31초** — 16분으로 잡기 | 파드 Ready · `/readyz` 200 · PG 로그 `password authentication failed` **0** | ⟨ ⟩ |
 | 8 | 🔴 **⑤ `4-edge` apply** | `드릴레코드_전환` · 아래 ③ | 🔸 리허설 **35초**(도쿄 쪽만) | `dr-drill.` **SECONDARY 1줄** · 🔴 운영 도메인 SECONDARY **0** | ⟨ ⟩ |
-| 9 | **Stage 0 RPO** — 복구 가능 시점 | CNPG 복구 로그 · 🔸 아래 ⑤ | 3분 | 🔴 분해능 = `archive_timeout` **5분** · 🔸 리허설 참고값 **약 12분** | ⟨ ⟩ |
+| 9 | **Stage 0 RPO** — 복구 가능 시점 | CNPG 복구 로그 · 🔸 아래 ⑤ | 3분 | 🔴 **상한** = `archive_timeout` **5분** + 업로드 + S3 복제(**약 20초** `[10/30 실측 2표본]`) + `wal_retrieve_retry_interval` **5초** → **약 5분 25초 + 업로드** · 🔴 **하한은 0**(직전에 아카이브가 돌았으면) · 🔸 참고 실측 리허설 **약 12분** · 10/30 **3분 13초**(승격 직전 표본) | ⟨ ⟩ |
 | 10 | **데이터 공백** | `collector-completeness` 대조 | 5분 | 공백 구간 기록 | ⟨ ⟩ |
 | 11 | 측정값 수집 | 4장 | 10분 | 단계별 시각 · 증거 파일 | ⟨ ⟩ |
 | 11-1 | DNS 가 넘어갔나 | `dig dr-drill.aquasentinel.cloud` | 2분 | 응답이 **도쿄 ALB** | ⟨ ⟩ |
 | 11-2 | 🔴 데드맨 `new → up` | Healthchecks.io 화면 | 2분 | **C(계정) · A(확인)** | ⟨ ⟩ |
 | 11-3 | 🔴 **화면 눈으로** | 브라우저 | 5분 | **B** — `dr-drill.` 로그인 → 대시보드 본문까지 · 🔸 **프라이빗 창 권장**(아래 상자) | ⟨ ⟩ |
 | 12 | 🔴 **뒷정리** — 🔴 **함정 2건** | 3장 | **34분** `[사실]` · 🔸 리허설 **49분**(함정 대응 포함) | 과금 자원 **0** · 🔴 **3장 3.1·3.2 까지** | ⟨ ⟩ |
+
+🔴 **「약 6분」은 상한이고 하한이 아닙니다** `[2026-10-30 발견 1부-11]` — 분해능 5분을 하한처럼 적으면 **실측이 5분보다 작게 나올 수 있다는 사실**이 가려집니다. 보고에는 **구간**으로 적습니다.
 
 ### ①-가 Terraform apply — **2·3단계만** (`1-network` · `2-cluster`)
 
@@ -327,7 +366,7 @@ Plan: 0 to add, 5 to change, 0 to destroy
 |---|---|
 | 적용 | `10:01:13Z` `terraform apply -var dr_mode=active` → `0 added, 4 changed` |
 | 자식 패치 | `10:02:07Z` 3건 → **0건** |
-| 깨어남 | `10:02:25Z` Rollout `1·2·2·2`(= 서울) · ScaledObject **4개 Ready=True** |
+| 깨어남 | `10:02:25Z` Rollout `1·2·2·2`(= 서울) · ScaledObject **4개 Ready=True** 🔸 **이 4 는 `-n api-module` 범위입니다** — `web/web-backend` 를 안 셌습니다(발견 1부-6) |
 | 걸린 시간 | **72초** · 🟢 **손 작업 없음** |
 | 수집기 | `collector-*` 6개 `suspend=true` 유지 🟢 |
 
@@ -377,12 +416,32 @@ done
 kubectl --context "$TOKYO" -n api-module get rollout \
   -o custom-columns='NAME:.metadata.name,DESIRED:.spec.replicas,READY:.status.readyReplicas'
 # 🔴 서울 기준값: evaluation=1 · grading=2 · interpolation=2 · processor=2
-kubectl --context "$TOKYO" -n api-module get scaledobject    # 🔴 0개면 안 깨어난 것
+kubectl --context "$TOKYO" get scaledobject -A \
+  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status'
+# 🔴 5개여야 합니다 — api-module 4(evaluation·grading·interpolation·processor) + web 1(web-backend)
+# 🔴 0개면 안 깨어난 것. 🔴 `-n api-module` 로만 세면 4 가 나와 「다 됐다」로 보입니다(발견 1부-6)
 ```
 
 🔸 **왜 중요한가** — 계획서가 정한 DR 복구 완료의 기준이 *「해양 데이터가 다시 신선해지는 것」* 이고 그걸 되살리는 주체가 이 4개 워크로드입니다. 안 깨어나면 **전환이 완료되지 않습니다.**
 
 🔸 **수집기는 그대로 멈춰 있어야 정상입니다** — `suspend_collectors` 는 `dr_mode` 와 **다른 축**(`apps-kustomize.tf:45`)이라 `dr_mode=active` 여도 `collector-*` 6개는 `suspend=true` 를 유지합니다 `[10/28 실측 · terraform show -json 으로 확인]`. `dr_mode=active` 가 빼는 suspend 는 `evaluation-sweep`·`interpolation-error` 둘뿐이고, 이들은 공공 API 를 호출하지 않습니다.
+
+🔴🔴 **그런데 `suspend_collectors` 가 안 덮는 CronJob 이 둘 있습니다** `[2026-10-30 발견 2부-7]`
+
+| 어디 | 무엇 | 주기 | 훈련 중 도나 |
+|---|---|---|---|
+| 🔴 `api-module` | **`raw-coverage`** | **`*/30 * * * *`**(30분마다) | 🔴🔴 **돕니다** — 10/30 2부에 `05:00:00Z` 실행. 이름이 `collector-` 로 시작하지 않아 패치가 안 집습니다 |
+| 🔴 `web` | **`ocean-fetch`** | `10 18 * * *`(`18:10Z`) | 🔸 10/30 엔 **안 돌았습니다**(구간 밖). 🔴 **`web` 은 Application 자체가 패치 대상 밖**입니다 |
+
+🔴 **그래서 「수집기 멈춤」을 `collector-*` 6개만 보고 판정하면 안 됩니다.** 도쿄 CronJob 을 전수로 봅니다:
+
+```bash
+kubectl --context "$TOKYO" get cronjobs -A \
+  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,SUSPEND:.spec.suspend,SCHEDULE:.spec.schedule'
+# 🔴 열 번호로 파싱하지 마십시오 — SCHEDULE 에 공백이 있어 `awk '{print $N}'` 이 밀립니다(10/30 실제)
+```
+
+🔸 **근본 수정은 런북이 아니라 Terraform** 입니다 — `apps-kustomize.tf` 의 `suspend_collectors` 패치가 ⑴ **`web` Application** 을 대상에 넣고 ⑵ **`collector-` 접두사 대신 CronJob 전수**를 집도록 바뀌어야 합니다. 🔴 **이 묶음은 문서만 고치는 MR 이라 거기엔 넣지 않았습니다** — 별건으로 올립니다.
 
 ### ②-1 🔴 7단계 뒤 — **시크릿이 파드까지 닿아야 끝납니다** `[2026-10-28 실측]`
 
@@ -467,8 +526,14 @@ terraform apply -input=false -var 'failover_hostnames=[]'
 
 # 전환은 서울 쪽 헬스체크를 뒤집어서 합니다
 cd ../../../seoul/rebuild/4-edge
-terraform apply -input=false -var drill_health_check_inverted=true
+terraform init -backend-config=backend.hcl -reconfigure
+# 🔴🔴 tfstate_bucket 은 기본값이 없습니다(variables.tf:21) — 빠뜨리면 apply 가 변수를 물으며 멈춥니다
+terraform apply -input=false \
+  -var tfstate_bucket=aquasentinel-tfstate-379937169195 \
+  -var drill_health_check_inverted=true
 ```
+
+🔴 **서울 쪽은 플래그가 둘입니다** `[2026-10-30 발견 1부-3]` — `tfstate_bucket` 과 `drill_health_check_inverted`. 전환·원복 전부 같은 모양이고 `드릴레코드_전환` 2장과 맞춥니다.
 
 🔴🔴 **`-var 'failover_hostnames=[]'` 를 빠뜨리면 안 됩니다**(2026-10-28 신설)
 
@@ -555,6 +620,8 @@ done
 | 기준 | 계획서 **5.1** · 6.3 체크리스트 **전부 ✅** |
 | 누가 | **A · C 가 그 자리에서** |
 | 🔴 A 권고 | **13:00** 을 넘으면 2부는 다른 날 — 2부가 밤까지 밀려 뒷정리를 못 하는 쪽을 막습니다 |
+| 🔴🔴 **판정 전에 반드시 보는 두 칸** | `cloudnativepg-tokyo/` **= 0**(3장 #6-1) · **기본 컨텍스트 원복**(3장 #9). 🔴 **둘이 판정 표에 없어서 ❌ 인 채로 판정이 났습니다** `[2026-10-30 발견 1부-9]` — 「남기는 것」(#8)과 **다른 칸**입니다 |
+| 🔸 2부 시작 시각 | 판정 직후가 기본이지만, **그날 긴 중단이 있으면 그 뒤로** 미룹니다(0.1). 회차별 시각은 그 회차 진행표 |
 
 ---
 
@@ -568,10 +635,10 @@ done
 | 3 | 서울 내부 NLB — gitops `kustomization.yaml` **한 줄 삭제** | 서울 NLB **0**. LBC 가 SG 까지 같이 지웁니다 *(1부 뒤엔 해당 없음)* |
 | 5 | 드릴 헬스체크 | `-var drill_health_check_inverted=false` 로 원복 |
 | **6** | 🔴 **도쿄 러너 다시 Paused** | GitLab Runners 화면 |
-| **6-1** | 🔴🔴 **S3 잔재 — `cloudnativepg-tokyo/` · 도쿄 Thanos 블록** | 🔴 **안 지우면 다음 구축이 `Expected empty archive` 로 멈춥니다**(10/25 실제) |
+| **6-1** | 🔴🔴 **S3 잔재 — `cloudnativepg-tokyo/` · 도쿄 Thanos 블록** | 🔴 **안 지우면 다음 구축이 `Expected empty archive` 로 멈춥니다**(10/25 실제). 🔴🔴 **검증은 `aws s3 ls` 가 아니라 `list-object-versions` 의 `length(Versions)` = 0 으로 합니다** `[2026-10-30 발견 2부-11]` — 버킷에 버전 관리가 켜져 있어 `rm --recursive` 뒤에도 `aws s3 ls` 는 **0 을 내는데 Versions 는 879개(1.22 GiB) 남아 있었습니다** |
 | 7 | 과금 자원 **0** | 아래 **3.3** 명령 |
 | 8 | 남기는 것 | `tokyo/persistent`(S3 3 · ACM 1) · Secrets · ECR · 🔸 러너 EC2(Paused) |
-| 9 | 기본 컨텍스트 | `kubectl config use-context $SEOUL` · 🔸 `dr-tokyo` 컨텍스트 항목도 삭제 |
+| **9** | 🔴 **기본 컨텍스트 원복** | `kubectl config use-context $SEOUL` → 🔴 **노드 리전으로 확인**(`kubectl get nodes -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/region}'` 가 `ap-northeast-2`) · 🔸 `dr-tokyo` 컨텍스트 항목도 삭제. 🔴 **「과금 자원 0」과 같은 급입니다** `[2026-10-30 발견 1부-10]` — 안 하면 다음 작업이 **지워진 클러스터를 보며** 조용히 실패합니다 |
 
 🔴 **6-1 지울 때 접두사를 눈으로 확인하십시오** — `cloudnativepg/`(끝에 `-tokyo` 없음)는 **서울 백업의 복제본이자 DR 자산**(지금 4,413개)이라 지우면 **리전 장애 때 복구가 불가능**해집니다. 🔸 판별은 **접두사 이름이 아니라 `ReplicationStatus`** 로 합니다 — 아래 3.2.
 
@@ -634,9 +701,18 @@ terraform destroy -input=false -auto-approve -var dr_mode=active -var promote_to
 terraform state list | wc -l    # 🔴 0 이어야 합니다
 ```
 
-🔸 10/28 리허설에서 1회차 `exit 1`(58분 묶임) → 위 2줄 → 2회차 `exit 0` · state 0개. **10/25 뒷정리 34분의 원인일 가능성이 큽니다.**
+🔴 **재현 3회 — 확정입니다. 「막히기를 기다리지 말고 destroy 를 돌린 뒤 바로 ⒜⒝ 를 칩니다」** `[2026-10-28 리허설 · 2026-10-30 훈련 1부·2부 실측 · 발견 2부-9]`
 
-### 3.2 🔴🔴 Terraform 뒤에 **손으로 걷어낼 3종** `[2026-10-28 리허설 실측]`
+| 회차 | destroy 시작 | ⒜ 고아 webhook | ⒝ finalizer | destroy 끝 | 전체 |
+|---|---|---|---|---|---|
+| 10/28 리허설 | — | 🔴 **몰라서 안 침** | 〃 | `exit 1` → 수동복구 → 재실행 | 🔴 **58분 묶임** |
+| 10/30 **1부** | `01:21:21Z` | `01:22:54Z`(**50초** 시점) | `01:25:39Z`(**4분** 시점) | `exit 0` `01:25:47Z` | **4분 26초** |
+| 🟢 10/30 **2부** | `05:31:05Z` | `05:32:23Z`(**78초** 시점) | `05:32:56Z`(**111초** 시점) | `exit 0` `05:33:14Z` | 🟢 **2분 9초** |
+
+🔴 **⒜⒝ 는 destroy *전* 이 아니라 destroy 를 돌린 *직후* 에 칩니다** — 네임스페이스가 `Terminating` 으로 들어가야 조건이 읽히고 finalizer 가 보입니다.
+🟢 **1부 4분 26초 → 2부 2분 9초로 줄어든 것은 「더 일찍 쳤기 때문」**입니다. 기다려서 얻는 것은 없습니다. 🔸 10/25 뒷정리 34분의 원인도 이것일 가능성이 큽니다.
+
+### 3.2 🔴🔴 Terraform 뒤에 **손으로 걷어낼 4종** `[2026-10-28 리허설 · 2026-10-30 훈련 실측]`
 
 `terraform destroy` 는 **자기 state 에 있는 것만** 지웁니다. 아래 셋은 **컨트롤러가 만든 것**이라 state 에 없고, 둘은 **계속 과금**되며 둘은 **VPC 삭제를 막습니다.**
 
@@ -644,7 +720,10 @@ terraform state list | wc -l    # 🔴 0 이어야 합니다
 |---|---|---|---|
 | **ALB** `k8s-ingress-aquasent-*` + 대상 그룹 | **LBC**(Gateway 보고) | 🔴 **예** | 🔴 예(서브넷 ENI) |
 | **EBS** `*-dynamic-pvc-*` (리허설 때 **6개 · 60 GiB**) | **EBS CSI**(PVC 보고) | 🔴 **예** | 아니오 |
-| **SG** `k8s-ingress-aquasent-*` · `k8s-traffic-*` | **LBC** | 아니오 | 🔴 **예** |
+| 🔴 **NLB** `aquasentinel-dev-pg-rw-internal` | **LBC** — 🔴 **2부 준비 A 의 gitops 한 줄** | 🔴 **예** | 🔴 **예** |
+| **SG** `k8s-*` — 🔴 **이름이 셋 이상입니다**(`k8s-ingress-aquasent-*` · `k8s-traffic-*` · NLB 몫 `k8s-aquasent-aquasent-*`) | **LBC** | 아니오 | 🔴 **예** |
+
+🔴🔴 **NLB 는 2026-10-30 2부에 처음 드러났습니다** `[발견 2부-10]` — `pg-rw-internal-nlb.yaml` 한 줄이 **서울·도쿄 양쪽 Argo 에 똑같이** 적용되므로, **준비 A 를 쓰는 회차엔 도쿄에도 NLB 가 하나 더 생깁니다**(생성 `04:39:42Z` · 태그 `elbv2.k8s.aws/cluster = aquasentinel-dr-apne1-eks`). 🔴 **SG 가 2개가 아니라 3개였던 것도 같은 원인**입니다(NLB 몫 하나 추가). 🔴 **그래서 SG 는 개수를 외우지 않고 `k8s-` 로 시작하는 것을 전부 지웁니다** — 아래 ④ 가 이미 그렇게 돼 있습니다.
 
 🔴🔴 **증상은 `1-network` destroy 가 VPC 에서 끝나지 않는 것입니다 — 기다려도 안 끝납니다.** 10/28 2회차 실측: `Still destroying... [13m30s elapsed]` 까지 **계속 재시도만** 했고, ENI 도 서브넷도 이미 0이었습니다. 남아 있던 것은 **SG 2개**(`k8s-ingress-aquasent-*` · `k8s-traffic-*`)뿐이었고, **그 둘을 지우자 4초 만에 끝났습니다.** 🔸 1회차에는 7분 31초로 끝나 「느릴 뿐」로 보였는데, 2회차에서 **끝나지 않는다**는 것이 드러났습니다. 🔴 **VPC 가 5분 넘게 `Still destroying` 이면 기다리지 말고 아래 ④(SG)부터 돌리십시오.**
 
@@ -659,9 +738,20 @@ for arn in $(aws elbv2 describe-load-balancers --region $R \
 done
 # ② ALB 가 완전히 사라진 뒤 대상 그룹
 until [ "$(aws elbv2 describe-load-balancers --region $R --query 'length(LoadBalancers)' --output text)" = 0 ]; do sleep 10; done
-for tg in $(aws elbv2 describe-target-groups --region $R --query 'TargetGroups[].TargetGroupArn' --output text); do
-  aws elbv2 delete-target-group --region $R --target-group-arn "$tg"
+# 🔴🔴 ALB 와 같이 지우면 **에러도 안 내고 조용히 실패합니다** `[2026-10-30 발견 1부-4]`
+#    10/30 1부: 손정리 ① 에서 ALB 와 함께 쳤는데 대상 그룹 3개가 그대로 남았고 **에러 메시지가 없었습니다.**
+#    ALB 가 사라진 뒤 다시 치니 바로 지워졌습니다. → 🔴 **exit code 를 믿지 말고 개수를 봅니다.**
+for i in 1 2 3; do
+  for tg in $(aws elbv2 describe-target-groups --region $R --query 'TargetGroups[].TargetGroupArn' --output text); do
+    aws elbv2 delete-target-group --region $R --target-group-arn "$tg"
+  done
+  N=$(aws elbv2 describe-target-groups --region $R --query 'length(TargetGroups)' --output text)
+  echo "  남은 대상 그룹 $N"
+  [ "$N" = 0 ] && break
+  sleep 15
 done
+# 🔴 마지막에 0 을 **눈으로** 봅니다
+aws elbv2 describe-target-groups --region $R --query 'length(TargetGroups)' --output text
 # ③ 고아 EBS — 🔴 **이름표까지 보고 좁힙니다**
 #    `available` 만으로 거르면 **러너가 꺼져 있을 때 그 루트 볼륨까지 지웁니다.**
 #    지울 것은 EBS CSI 가 PVC 보고 만든 `aquasentinel-dr-apne1-eks-dynamic-pvc-*` 뿐입니다.
@@ -705,6 +795,24 @@ done
 # 10/28 실측: cloudnativepg-tokyo/ 168개 RS=None(삭제) · loki fake/·index/ 32개 RS=None(삭제)
 #             cloudnativepg/·thanos/·raw/ 는 전부 RS=REPLICA(남김)
 ```
+
+🔴🔴 **지운 뒤 검증은 `aws s3 ls` 가 아니라 버전까지 봅니다** `[2026-10-30 발견 2부-11]`
+
+`observability` 버킷은 **버전 관리가 켜져 있고** 수명주기가 `noncurrent-version-expiration 14일`입니다. 그래서 `rm --recursive` 뒤에
+`aws s3 ls` 는 **0 을 내는데 삭제 표시 밑에 예전 버전이 그대로 남아 있습니다.** 10/30 실측으로 **879개 · 1.22 GiB** 가 남아 있었습니다.
+
+```bash
+# 🔴 이것만으로는 「지웠다」고 할 수 없습니다
+aws s3 ls "s3://$B3/cloudnativepg-tokyo/" --recursive | wc -l
+
+# 🟢 버전까지 0 인지 봅니다
+aws s3api list-object-versions --bucket "$B3" --prefix cloudnativepg-tokyo/ \
+  --query 'length(Versions)' --output text          # 🔴 0 이어야 합니다
+aws s3api list-object-versions --bucket "$B3" --prefix cloudnativepg-tokyo/ \
+  --query 'length(DeleteMarkers)' --output text      # 🔸 삭제 표시는 남아도 됩니다
+```
+
+🔴 **다음 구축을 막는 것은 「객체」가 아니라 「버전」입니다** — 버전이 남아 있으면 `Expected empty archive` 가 다시 납니다.
 
 🔸 **도쿄 Thanos 블록은 2시간 블록 주기 때문에 1부(약 1시간)에는 안 생길 수 있습니다** — 10/28 엔 `thanos/` 의 당일 객체 27개가 **전부 `RS=REPLICA`** 였습니다. 10/25 의 「도쿄 블록 3」과는 다른 상황이니 **세지 말고 `RS` 로 판별**하십시오.
 

@@ -171,7 +171,16 @@ kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres
                        FROM pg_stat_replication ORDER BY application_name;"
 ```
 
-→ 서울 안 복제본 2개 말고 **도쿄 것이 한 줄 더** 보여야 하고, `client_addr` 가 **`10.1.x.x`**(도쿄 대역)여야 합니다.
+→ 서울 안 복제본 2개 말고 **도쿄 것이 한 줄 더** 보여야 합니다.
+
+🔴🔴 **`client_addr` 는 도쿄 대역(`10.1.x.x`)이 아니라 서울 NLB ENI(`10.0.x.x`)가 정상입니다** `[2026-10-30 실측 · 발견 2부-6]`
+
+| 줄 | `application_name` | `client_addr` | 정체 |
+|---|---|---|---|
+| 서울 HA | `aquasentinel-pg-2` · `-3` | `10.0.22.230` · `10.0.71.241` | 서울 자체 복제본 |
+| 🔴 **도쿄** | `aquasentinel-pg` | 🔴 **`10.0.37.177`** | **서울 내부 NLB 의 ENI** |
+
+🟢 **실측은 「서울 대역 주소가 보였다」까지입니다** `[2026-10-30]`. 🔸 **왜 그런가는 추론** `[추론]` — 도쿄는 준비 A 의 **서울 내부 NLB** 를 거쳐 들어오고 NLB 가 클라이언트 IP 를 보존하지 않으면 **NLB ENI 주소**로 보입니다. 🔸 다음 회차에 NLB 의 `preserve_client_ip` 를 직접 조회해 확정하십시오(훈련 뒤엔 NLB 가 지워져 못 봅니다). 🔴 **`10.1.x.x` 를 기다리면 「안 붙었다」고 잘못 판단합니다** — 도쿄 줄은 `application_name` 이 **`aquasentinel-pg`**(서울 것은 `-2`·`-3`)인 것으로 가립니다.
 
 **도쿄 쪽** — 받는 쪽 상태:
 
@@ -222,6 +231,14 @@ kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres
 | `restore_command` **있음** | 그래도 막히면 S3 아카이브로 폴백합니다 |
 | `max_wal_senders` = **10** · 현재 **2** `[10/28 실측]` | 도쿄가 붙어도 3/10 — 서울 복제에 자리가 모자라지 않습니다 |
 | 서울 복제 슬롯 **2개** = `_cnpg_aquasentinel_pg_2`·`_3` `[10/28 실측]` | 🔴 **둘 다 서울 자체 복제본용 HA 슬롯**입니다. 도쿄는 슬롯을 만들지 않습니다(→ 5장 「슬롯」) |
+
+🔴🔴 **「5초 안」은 2026-10-30 에 빗나갔습니다 — 실측 84초** `[발견 2부-2]`
+
+재시도 자체는 5초마다 돌지만, **끊겨 있는 동안 시작된 연결 하나가 타임아웃으로 죽기를 기다립니다.** 10/30 실측에서 그 연결 한 번이 `04:58:24 → 05:00:37` 로 **2분 13초** 매달렸고, 라우트 복원이 그 사이에 걸려 **81초를 기다린 뒤** 재개됐습니다.
+
+> 🟢 **재개 자체는 수 초. 다만 끊겨 있는 동안 시작된 연결이 타임아웃으로 죽기를 기다리므로 **0 ~ 2분 13초**가 더 붙을 수 있다.** 복원 시점이 그 주기 어디에 걸리느냐에 따라 달라진다.
+
+🔸 그래서 **3.5 의 「2분을 기다려도 안 돌아오면」 기준은 그대로 둡니다** — 2분 13초가 상한이라 2분은 아직 정상 범위 끝입니다. 🔴 **사람 손이 필요했나**가 판정 항목이고, 10/30 은 **「아니오」**였습니다.
 
 🔴 **예상이 빗나가는 것 자체가 결과입니다.** 다르게 나오면 그대로 적습니다 — 맞추려고 고치지 않습니다.
 
@@ -290,7 +307,9 @@ kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres
   psql -U postgres -c "SELECT status, sender_host FROM pg_stat_wal_receiver;"
 ```
 
-🔴 **끊긴 것을 확인한 직후, 두 값을 바로 찍습니다** (재희님 10/28 보완):
+🔴🔴 **ⓐ 는 끊기 *전* 스냅샷이라 손실의 「하한」만 줍니다** `[2026-10-30 발견 2부-12]` — 끊긴 순간의 서울 위치는 **아무도 안 찍었으면 영영 모릅니다.** 그래서 `ⓐ′` 가 **선택이 아니라 필수**입니다. 🔴 **ⓐ′ 를 빠뜨리면 상한이 없어 RPO 를 「0」이라고 쓰게 되고, 그건 틀린 주장이 됩니다.**
+
+🔴 **끊긴 것을 확인한 직후, 두 값을 바로 찍습니다** (재희님 10/28 보완 · 🔴 **10/30 에 필수로 승격**):
 
 ```bash
 date -u +%FT%TZ                       # T_cut_confirmed
@@ -400,18 +419,33 @@ kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres
 ```bash
 date -u +%FT%TZ                       # T_cut2
 kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
-  psql -U postgres -tAc "SELECT pg_current_wal_lsn();"            # ⓐ₂
+  psql -U postgres -tAc "SELECT pg_current_wal_lsn();"            # ⓐ₂  ← 끊기 **전**
 cd AWS/terraform/tokyo/rebuild/5-peering
 terraform apply -input=false -var enable_tokyo_route=false
-# 끊김 확인 뒤
+# 끊김 확인 뒤 — 🔴 **셋 다** 찍습니다
 kubectl --context "$TOKYO" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
   psql -U postgres -tAc "SELECT pg_last_wal_receive_lsn();"        # ⓑ₂
+kubectl --context "$SEOUL" exec -n aquasentinel-db aquasentinel-pg-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT pg_current_wal_lsn();"             # 🔴 ⓐ₂′ ← 끊기 **뒤**
 ```
 
 | 기록할 것 | 실측 |
 |---|---|
-| `T_cut2` · ⓐ₂ · ⓑ₂ | ⟨ ⟩ |
-| **전환 시점 실제 손실** = `diff(ⓐ₂, ⓑ₂)` | ⟨ ⟩ 바이트 |
+| `T_cut2` · ⓐ₂ · ⓑ₂ · 🔴 **ⓐ₂′** | ⟨ ⟩ |
+| **전환 시점 실제 손실 — 하한** = `max(0, diff(ⓐ₂, ⓑ₂))` | ⟨ ⟩ 바이트 |
+| 🔴 **전환 시점 실제 손실 — 상한** = `diff(ⓐ₂′, ⓑ₂)` ← **보고값** | ⟨ ⟩ 바이트 |
+
+🔴🔴 **`diff(ⓐ₂, ⓑ₂)` 가 음수로 나옵니다 — 정상입니다** `[2026-10-30 실측 **−520 B** · 발견 2부-5]`
+
+ⓐ₂ 는 **끊기 전** 스냅샷이고 ⓑ₂ 는 **끊긴 뒤** 값이라, 그 사이에 도쿄가 ⓐ₂ 를 **지나서** 더 받으면 음수가 됩니다.
+
+| | 쓰는 법 |
+|---|---|
+| 🔴 음수가 나왔을 때 | **하한은 0 으로 적습니다.** 「손실이 0」이 아니라 **「하한이 0」**입니다 |
+| 🔴 **그래서 ⓐ₂′ 를 꼭 찍습니다** | 상한이 없으면 **「손실 0」으로 보고하게 되고 그건 틀린 주장**입니다 |
+| 🟢 10/30 실제 | 하한 **0** · 상한 **520 B** = **0 ~ 25.7초**(`R` 로 환산) — 구간으로 보고했습니다 |
+
+🔴🔴 **「0」을 설계 보장으로 쓰지 마십시오** — `synchronous_standby_names` 가 **비어 있고** 복제가 전부 `async` 입니다 `[10/30 실측]`. 「데이터 손실 0」은 성립하지 않습니다.
 
 🔴 **두 숫자의 쓰임이 다릅니다** — 3.5 의 상한은 **「Stage 2 RPO 실측」**(계획서 4.4 목표 1분과 대조할 값)이고, 3.6 의 값은 **「이번 전환에서 실제로 잃은 양」**입니다. 10.2 에 **둘 다** 적습니다.
 
