@@ -635,7 +635,7 @@ done
 | 3 | 서울 내부 NLB — gitops `kustomization.yaml` **한 줄 삭제** | 서울 NLB **0**. LBC 가 SG 까지 같이 지웁니다 *(1부 뒤엔 해당 없음)* |
 | 5 | 드릴 헬스체크 | `-var drill_health_check_inverted=false` 로 원복 |
 | **6** | 🔴 **도쿄 러너 다시 Paused** | GitLab Runners 화면 |
-| **6-1** | 🔴🔴 **S3 잔재 — `cloudnativepg-tokyo/` · 도쿄 Thanos 블록** | 🔴 **안 지우면 다음 구축이 `Expected empty archive` 로 멈춥니다**(10/25 실제). 🔴🔴 **검증은 `aws s3 ls` 가 아니라 `list-object-versions` 의 `length(Versions)` = 0 으로 합니다** `[2026-10-30 발견 2부-11]` — 버킷에 버전 관리가 켜져 있어 `rm --recursive` 뒤에도 `aws s3 ls` 는 **0 을 내는데 Versions 는 879개(1.22 GiB) 남아 있었습니다** |
+| **6-1** | 🔴🔴 **S3 잔재 — `cloudnativepg-tokyo/` · 도쿄 Thanos 블록** | 🔴 **안 지우면 다음 구축이 `Expected empty archive` 로 멈춥니다**(10/25 실제). 🔴🔴 **검증은 `aws s3 ls` 가 아니라 `list-object-versions` 의 ``length(Versions \|\| `[]`)`` = 0 으로 합니다** `[2026-10-30 발견 2부-11 · 2026-10-31 쿼리 교정]` — 버킷에 버전 관리가 켜져 있어 `rm --recursive` 뒤에도 `aws s3 ls` 는 **0 을 내는데 Versions 는 879개(1.22 GiB) 남아 있었습니다**. 🔴 **서울·도쿄를 각각 봅니다** — CRR 은 삭제를 복제하지 않습니다(3.2 끝) |
 | 7 | 과금 자원 **0** | 아래 **3.3** 명령 |
 | 8 | 남기는 것 | `tokyo/persistent`(S3 3 · ACM 1) · Secrets · ECR · 🔸 러너 EC2(Paused) |
 | **9** | 🔴 **기본 컨텍스트 원복** | `kubectl config use-context $SEOUL` → 🔴 **노드 리전으로 확인**(`kubectl get nodes -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/region}'` 가 `ap-northeast-2`) · 🔸 `dr-tokyo` 컨텍스트 항목도 삭제. 🔴 **「과금 자원 0」과 같은 급입니다** `[2026-10-30 발견 1부-10]` — 안 하면 다음 작업이 **지워진 클러스터를 보며** 조용히 실패합니다 |
@@ -806,13 +806,29 @@ done
 aws s3 ls "s3://$B3/cloudnativepg-tokyo/" --recursive | wc -l
 
 # 🟢 버전까지 0 인지 봅니다
+# 🔴🔴 `length(Versions)` 로 쓰면 **깨끗할 때 0 이 아니라 에러**가 납니다 `[2026-10-31 실측]`
+#    In function length(), invalid type for value: None ... received: "null"   (exit 255)
+#    비어 있으면 응답에 `Versions` 키가 **아예 없어서** JMESPath 가 null 에 length() 를 씁니다.
+#    `|| `[]`` 를 붙여야 0 을 냅니다. 🔴 0 을 기대하는 검증에서 에러가 나면 「못 쟀다」인데
+#    exit code 만 보면 「실패 = 아직 남았다」로 읽기 쉽습니다.
 aws s3api list-object-versions --bucket "$B3" --prefix cloudnativepg-tokyo/ \
-  --query 'length(Versions)' --output text          # 🔴 0 이어야 합니다
+  --query 'length(Versions || `[]`)' --output text        # 🔴 0 이어야 합니다
 aws s3api list-object-versions --bucket "$B3" --prefix cloudnativepg-tokyo/ \
-  --query 'length(DeleteMarkers)' --output text      # 🔸 삭제 표시는 남아도 됩니다
+  --query 'length(DeleteMarkers || `[]`)' --output text   # 🔸 삭제 표시는 남아도 됩니다
 ```
 
 🔴 **다음 구축을 막는 것은 「객체」가 아니라 「버전」입니다** — 버전이 남아 있으면 `Expected empty archive` 가 다시 납니다.
+
+🔴🔴 **그리고 원본에서 지운 것이 도쿄 복제본을 지우지 않습니다** `[2026-10-31 실측]`
+
+CRR 은 **삭제를 복제하지 않습니다**(`DeleteMarkerReplication` 미설정 · 버전 ID 지정 삭제는 애초에 복제 대상이 아님). 10/31 에 서울 `observability` 에 시험 객체 3개를 넣고 **원본 쪽 버전을 전부 지운 뒤**에도 도쿄 쪽에는 **Versions 3개가 그대로** 있었습니다.
+
+| 지운 곳 | 서울 원본 | 도쿄 복제본 |
+|---|---|---|
+| 원본만 지움 | `V=0 D=0` | 🔴 **`V=3`** |
+| 양쪽 지움 | `V=0 D=0` | 🟢 `V=0 D=0` |
+
+→ 🔴 **#6-1 은 서울과 도쿄를 각각 확인합니다.** 도쿄에 넣은 것은 도쿄에서, 서울에서 복제돼 간 것은 `ReplicationStatus` 로 가려 **남깁니다**(위 3.2).
 
 🔸 **도쿄 Thanos 블록은 2시간 블록 주기 때문에 1부(약 1시간)에는 안 생길 수 있습니다** — 10/28 엔 `thanos/` 의 당일 객체 27개가 **전부 `RS=REPLICA`** 였습니다. 10/25 의 「도쿄 블록 3」과는 다른 상황이니 **세지 말고 `RS` 로 판별**하십시오.
 
