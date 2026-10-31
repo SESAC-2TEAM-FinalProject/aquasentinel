@@ -45,6 +45,7 @@ locals {
       "api-module/processor",
       "ocean-batch",
       "status-svc",
+      "web-backend",
       "web-frontend",
       ] : repo => join("=", [
         "${local.ecr_registry_seoul}/${local.ecr_repo_ns}/${repo}",
@@ -79,12 +80,28 @@ locals {
     ])]
 
     # web 은 apps/ 가 아니라 patched_apps 로 만든다(applications.tf) — 거기서
-    # 이 항목을 lookup 한다. 🔴 쿠버네티스 객체 이름은 2026-10-26 에
-    # status-svc → web-backend 로 바뀌었지만 **ECR 리포지토리 이름은
-    # `status-svc` 그대로**다(실측). 이미지 이름을 같이 바꾸면 안 된다.
+    # 이 항목을 lookup 한다.
+    #
+    # 🔴 쿠버네티스 객체 이름은 2026-10-26 에 status-svc → web-backend 로
+    #   바뀌었지만 ECR 리포지토리 이름은 한동안 `status-svc` 그대로였다.
+    #
+    # 🔴🔴 지금은 **두 이름을 다 넣는다**(이름 변경 4단계 · 2026-10-31).
+    #   gitops `manifests/web/{web-backend,alert-worker}.yaml` 의 `image:` 가
+    #   6단계(11/2 예정)에 `status-svc` → `web-backend` 로 바뀐다. 왼쪽(찾을
+    #   이름)이 gitops 와 한 글자라도 다르면 Kustomize 가 **오류 없이 아무것도
+    #   안 바꾸고** 서울 주소로 뜨므로(위 주석), 전환 창 동안은 양쪽을 들고 있어야
+    #   한다. 없는 이름에 대한 규칙은 kustomize 가 조용히 무시한다 — 해롭지 않다.
+    #
+    # 🟢 도쿄 쪽 리포지토리 실측(2026-10-31) — `aquasentinel-dev/web-backend` 가
+    #   복제돼 있고 태그 `c2e075f`·`7e52ac6`·`fafa205` 가 다 있다(복제 필터가
+    #   `aquasentinel-dev` PREFIX_MATCH 라 새 리포지토리도 자동으로 따라온다).
+    #
+    # 🔸 `status-svc` 줄은 이름 변경 **9단계**(11/2~3)에 지운다. 그때까지는
+    #   6단계를 되돌릴 수 있어야 하므로 남긴다.
     "web" = [
       local.ecr_same_repo["ocean-batch"],
       local.ecr_same_repo["status-svc"],
+      local.ecr_same_repo["web-backend"],
       local.ecr_same_repo["web-frontend"],
     ]
   }
